@@ -1,0 +1,24 @@
+{
+  "name": "Coral Garden",
+  "appearance_mode": "light",
+  "colors": {
+    "background": "#ECE2E1",
+    "surface": "#D3E0DC",
+    "surface_variant": "#AEE1E1",
+    "primary": "#FCD1D1",
+    "primary_hover": "#F5BABA",
+    "secondary": "#AEE1E1",
+    "secondary_hover": "#98CBCB",
+    "text_primary": "#4A4A4A",
+    "text_secondary": "#6B8B8B",
+    "text_on_primary": "#6A4A4A",
+    "text_on_secondary": "#2A4A4A",
+    "border": "#AEE1E1",
+    "border_focus": "#FCD1D1",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

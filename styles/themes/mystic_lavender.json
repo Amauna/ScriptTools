@@ -1,0 +1,24 @@
+{
+  "name": "Mystic Lavender",
+  "appearance_mode": "dark",
+  "colors": {
+    "background": "#060930",
+    "surface": "#333456",
+    "surface_variant": "#595B83",
+    "primary": "#F4ABC4",
+    "primary_hover": "#FFB8D1",
+    "secondary": "#595B83",
+    "secondary_hover": "#6D6F96",
+    "text_primary": "#E8E8F0",
+    "text_secondary": "#A8AAC8",
+    "text_on_primary": "#060930",
+    "text_on_secondary": "#FFFFFF",
+    "border": "#595B83",
+    "border_focus": "#F4ABC4",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

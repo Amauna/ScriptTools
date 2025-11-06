@@ -1,0 +1,53 @@
+Color palette 1:
+C4DFDF rgb(196, 223, 223)
+D2E9E9 rgb(210, 233, 233)
+E3F4F4 rgb(227, 244, 244)
+F8F6F4 rgb(248, 246, 244)
+
+Color palette 2:
+FAF3F3 rgb(250, 243, 243)
+E1E5EA rgb(225, 229, 234)
+A7BBC7 rgb(167, 187, 199)
+DA7F8F rgb(218, 127, 143)
+
+Color palette 3:
+DDDDDD rgb(221, 221, 221)
+222831 rgb(34, 40, 49)
+30475E rgb(48, 71, 94)
+F05454 rgb(240, 84, 84)
+
+Color palette 4:
+F4ABC4 rgb(244, 171, 196)
+595B83 rgb(89, 91, 131)
+333456 rgb(51, 52, 86)
+060930 rgb(6, 9, 48)
+
+Color palette 5:
+1F2544 rgb(31, 37, 68)
+474F7A rgb(71, 79, 122)
+81689D rgb(129, 104, 157)
+FFD0EC rgb(255, 208, 236)
+
+Color palette 6:
+5A639C rgb(90, 99, 156)
+7776B3 rgb(119, 118, 179)
+9B86BD rgb(155, 134, 189)
+E2BBE9 rgb(226, 187, 233)
+
+Color palette 7:
+FCD1D1 rgb(252, 209, 209)
+ECE2E1 rgb(236, 226, 225)
+D3E0DC rgb(211, 224, 220)
+AEE1E1 rgb(174, 225, 225)
+
+Color palette 8:
+F2F2F2 rgb(242, 242, 242)
+EBD5D5 rgb(235, 213, 213)
+EA8A8A rgb(234, 138, 138)
+685454 rgb(104, 84, 84)
+
+Color palette 9:
+000000 rgb(0, 0, 0)
+CFFFE2 rgb(207, 255, 226)
+A2D5C6 rgb(162, 213, 198)
+F6F6F6 rgb(246, 246, 246)
