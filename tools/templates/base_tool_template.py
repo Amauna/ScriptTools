@@ -15,7 +15,7 @@ USAGE:
 
 import sys
 from pathlib import Path
-from datetime import datetime
+from typing import Optional
 
 from PySide6.QtWidgets import QDialog
 from PySide6.QtCore import Qt
@@ -23,14 +23,14 @@ from PySide6.QtGui import QFont
 
 # Import NEW theme system ✨
 try:
-    from styles import ThemeLoader, get_theme_manager
+    from styles import ThemeLoader, get_theme_manager, get_path_manager, get_log_manager
     from styles.components import ExecutionLogFooter, create_execution_log_footer
     THEME_AVAILABLE = True
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
-        from styles import ThemeLoader, get_theme_manager
+        from styles import ThemeLoader, get_theme_manager, get_path_manager, get_log_manager
         from styles.components import ExecutionLogFooter, create_execution_log_footer
         THEME_AVAILABLE = True
     except ImportError:
@@ -38,6 +38,7 @@ except ImportError:
         THEME_AVAILABLE = False
         print("⚠️  Theme not available, using default styling")
         ExecutionLogFooter = None
+        get_log_manager = lambda: None
         create_execution_log_footer = None
 
 
@@ -85,11 +86,41 @@ class BaseToolDialog(QDialog):
             output_path: Output folder path
         """
         super().__init__(parent)
-        
-        # Store paths
-        self.input_path = Path(input_path) if input_path else Path.cwd()
-        self.output_path = Path(output_path) if output_path else Path.cwd()
-        
+
+        self.path_manager = get_path_manager()
+        self._path_listener_registered = False
+
+        # Unified logging
+        self.log_manager = None
+        self.log_category = f"TOOL:{self.__class__.__name__}"
+        self._tool_logger_id = f"{self.__class__.__name__}_{id(self)}"
+        try:
+            if callable(get_log_manager):
+                self.log_manager = get_log_manager()
+        except Exception:
+            self.log_manager = None
+
+        self.execution_log = None
+        self._suppress_footer_callback = False
+
+        default_input = self.path_manager.get_input_path()
+        default_output = self.path_manager.get_output_path()
+
+        resolved_input = Path(input_path).expanduser().resolve() if input_path else default_input
+        resolved_output = Path(output_path).expanduser().resolve() if output_path else default_output
+
+        self.input_path = resolved_input
+        self.output_path = resolved_output
+
+        # Synchronize with global manager when explicit overrides are provided
+        if input_path:
+            self.path_manager.set_input_path(resolved_input)
+        if output_path:
+            self.path_manager.set_output_path(resolved_output)
+
+        self.path_manager.register_listener(self._handle_paths_changed)
+        self._path_listener_registered = True
+
         # Get theme - Inherit from parent (main GUI) using NEW system! ✨
         self.current_theme = None
         if THEME_AVAILABLE:
@@ -112,7 +143,64 @@ class BaseToolDialog(QDialog):
         
         # Apply theme immediately
         self.apply_theme()
-    
+
+    def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
+        """Keep local state aligned with the shared path manager."""
+        self._sync_path_edits(input_path, output_path)
+
+    def _sync_path_edits(self, input_path: Path, output_path: Path) -> None:
+        """Update internal path state (UI mixins extend this)."""
+        self.input_path = input_path
+        self.output_path = output_path
+        if hasattr(self, "execution_log") and self.execution_log:
+            try:
+                if hasattr(self.execution_log, "set_output_path"):
+                    self.execution_log.set_output_path(str(output_path))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Logging helpers
+    # ------------------------------------------------------------------
+    def log_event(
+        self,
+        message: str,
+        *,
+        level: str = "INFO",
+        category: Optional[str] = None,
+        mirror_to_footer: bool = True,
+    ) -> None:
+        """
+        Relay a tool event to the unified session log (and optionally the UI).
+
+        Args:
+            message: Event description.
+            level: Logging severity indicator.
+            category: Override for session category (defaults to tool identifier).
+            mirror_to_footer: Whether to echo into the execution footer.
+        """
+        category_name = category or self.log_category
+
+        if self.log_manager:
+            try:
+                self.log_manager.log_event(category_name, message, level)
+            except Exception:
+                pass
+
+        if mirror_to_footer and hasattr(self, "execution_log") and self.execution_log:
+            try:
+                self._suppress_footer_callback = True
+                self.execution_log.log(message)
+            except Exception:
+                pass
+            finally:
+                self._suppress_footer_callback = False
+
+    # Backwards compatibility for existing tools still calling self.log(...)
+    def log(self, message: str, level: str = "INFO") -> None:
+        """Compatibility wrapper for legacy tools."""
+        self.log_event(message, level=level)
+
     def apply_theme(self):
         """
         Apply theme using NEW system! ✨
@@ -160,7 +248,20 @@ class BaseToolDialog(QDialog):
             
         except Exception as e:
             print(f"⚠️ [THEME] Error refreshing theme: {e}")
-    
+
+    def closeEvent(self, event):
+        """Ensure path manager listeners are released on close."""
+        if self._path_listener_registered:
+            try:
+                self.path_manager.unregister_listener(self._handle_paths_changed)
+            except Exception:
+                pass
+            finally:
+                self._path_listener_registered = False
+
+        self.log_event("Tool dialog closed.", mirror_to_footer=False)
+        super().closeEvent(event)
+
     def create_execution_log(self, parent_layout):
         """
         Create and add execution log footer to your tool
@@ -178,6 +279,16 @@ class BaseToolDialog(QDialog):
         if THEME_AVAILABLE and create_execution_log_footer:
             execution_log = create_execution_log_footer(self, str(self.output_path))
             parent_layout.addWidget(execution_log)
+            self.execution_log = execution_log
+
+            # Mirror footer actions into the unified log
+            if hasattr(execution_log, "log_cleared"):
+                execution_log.log_cleared.connect(self._log_footer_cleared)
+            if hasattr(execution_log, "log_saved"):
+                execution_log.log_saved.connect(self._log_footer_saved)
+            if hasattr(execution_log, "log_appended"):
+                execution_log.log_appended.connect(self._log_footer_appended)
+
             return execution_log
         else:
             print("⚠️ ExecutionLogFooter not available")
@@ -209,4 +320,24 @@ class BaseToolDialog(QDialog):
             x = (screen.width() - width) // 2
             y = (screen.height() - height) // 2
             self.setGeometry(x, y, width, height)
+
+    # ------------------------------------------------------------------
+    # Execution log callbacks
+    # ------------------------------------------------------------------
+    def _log_footer_cleared(self) -> None:
+        """Ensure log clear actions are persisted in the session log."""
+        self.log_event("Execution log cleared by user.", mirror_to_footer=False)
+
+    def _log_footer_saved(self, file_path: str) -> None:
+        """Record when the execution log is saved to disk."""
+        self.log_event(f"Execution log saved to: {file_path}", mirror_to_footer=False)
+
+    def _log_footer_appended(self, message: str) -> None:
+        """
+        Capture messages injected directly via the footer (e.g., copy confirmation),
+        ensuring they reach the unified session log.
+        """
+        if getattr(self, "_suppress_footer_callback", False):
+            return
+        self.log_event(message, mirror_to_footer=False)
 

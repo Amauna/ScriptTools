@@ -8,7 +8,6 @@ Professional tools with stunning visual effects
 
 import sys
 import os
-import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -25,7 +24,9 @@ from PySide6.QtGui import QFont, QPalette, QColor
 from styles import (
     ThemeLoader, get_theme_manager,
     apply_theme_to_app,
-    FadeAnimation, CombinedAnimations  # Beautiful animations!
+    FadeAnimation, CombinedAnimations,
+    get_path_manager,
+    get_log_manager
 )
 
 
@@ -36,65 +37,44 @@ class GA4ToolsGUI(QMainWindow):
         super().__init__()
         
         # Initialize logging
-        self.setup_logging()
-        self.log("[INIT] GA4 Tools GUI Initializing...")
+        self.log_manager = get_log_manager()
+        self.log_manager.start_session()
+        self.log("GA4 Tools GUI Initializing...", category="GUI", prefix="[INIT]")
         
         # Configuration
         self.theme_manager = get_theme_manager()
         self.default_theme = self.theme_manager.get_available_themes()[0]  # First theme
         self.current_theme = None  # Will be set in apply_theme
         self.current_category = None
-        self.input_path = str(Path.home() / "Documents")
-        self.output_path = str(Path(__file__).parent / "execution test" / "Output")
+
+        self.path_manager = get_path_manager()
+        self._path_listener_registered = False
+        self.input_path = str(self.path_manager.get_input_path())
+        self.output_path = str(self.path_manager.get_output_path())
         
         # Setup UI
         self.setup_window()
         self.setup_ui()
-        
+
+        self.path_manager.register_listener(self.on_paths_updated)
+        self._path_listener_registered = True
+        self.on_paths_updated(
+            self.path_manager.get_input_path(),
+            self.path_manager.get_output_path()
+        )
+
         # Apply default theme
         self.apply_theme(self.default_theme)
         
-        self.log("[OK] GA4 Tools GUI initialized successfully!")
+        self.log("GA4 Tools GUI initialized successfully!", category="GUI", prefix="[OK]")
     
-    def setup_logging(self):
-        """Setup comprehensive logging system"""
-        try:
-            logs_dir = Path(__file__).parent / "gui_logs"
-            logs_dir.mkdir(exist_ok=True)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_file = logs_dir / f"gui_execution_log_{timestamp}.txt"
-            
-            logging.basicConfig(
-                level=logging.INFO,
-                format='%(asctime)s - %(levelname)s - %(message)s',
-                handlers=[
-                    logging.FileHandler(log_file, encoding='utf-8'),
-                    logging.StreamHandler(sys.stdout)
-                ]
-            )
-            
-            self.logger = logging.getLogger(__name__)
-            self.logger.info("=" * 80)
-            self.logger.info("GA4 Data Analyst Tools Suite - GUI Execution Log")
-            self.logger.info("=" * 80)
-            self.logger.info(f"Session started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self.logger.info("=" * 80)
-            
-        except Exception as e:
-            print(f"Logging setup error: {e}")
-    
-    def log(self, message, level="INFO"):
-        """Log a message"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}"
-        
-        if level == "ERROR":
-            self.logger.error(formatted_message)
-        elif level == "WARNING":
-            self.logger.warning(formatted_message)
-        else:
-            self.logger.info(formatted_message)
+    def log(self, message: str, *, category: str = "GUI", level: str = "INFO", prefix: Optional[str] = None):
+        """Log a message via the unified session LogManager."""
+        if not hasattr(self, "log_manager") or self.log_manager is None:
+            return
+
+        entry = f"{prefix} {message}" if prefix else message
+        self.log_manager.log_event(category, entry, level)
     
     def setup_window(self):
         """Setup main window properties"""
@@ -323,7 +303,7 @@ class GA4ToolsGUI(QMainWindow):
         """Show tools for selected category"""
         # Safe logging - remove emojis from category name for logging
         safe_category_name = category_name.encode('ascii', 'ignore').decode('ascii') if category_name else "Unknown"
-        self.log(f"[CATEGORY] Category selected: {safe_category_name}")
+        self.log(f"Category selected: {safe_category_name}", category="GUI", prefix="[CATEGORY]")
         self.current_category = category_id
         
         # Clear content
@@ -454,6 +434,12 @@ class GA4ToolsGUI(QMainWindow):
                     "module": "tools.data_cleaning_transformation.metric_fixer",
                     "class": "MetricFixer"
                 },
+                {
+                    "name": "Column Order Harmonizer",
+                    "description": "✨ Enforce preset CSV column sequences, remove duplicates, and reorder effortlessly",
+                    "module": "tools.data_cleaning_transformation.column_order_harmonizer",
+                    "class": "ColumnOrderHarmonizer"
+                },
                 {"name": "Remove Duplicates", "description": "Find and remove duplicate rows in datasets", "module": None, "class": None},
                 {"name": "Column Standardizer", "description": "Standardize column names and formats", "module": None, "class": None},
                 {"name": "Missing Data Handler", "description": "Fill, interpolate, or remove missing values", "module": None, "class": None},
@@ -551,21 +537,21 @@ class GA4ToolsGUI(QMainWindow):
     
     def launch_tool(self, tool_info: dict):
         """Launch a tool"""
-        self.log(f"[LAUNCH] Launching tool: {tool_info['name']}")
+        self.log(f"Launching tool: {tool_info['name']}", category="TOOL", prefix="[LAUNCH]")
         
         try:
             module_path = tool_info["module"]
             class_name = tool_info["class"]
-            
+
             # Dynamic import
             module = __import__(module_path, fromlist=[class_name])
             tool_class = getattr(module, class_name)
-            
+
             # Create tool instance
             tool = tool_class(
                 parent=self,
-                input_path=self.input_path,
-                output_path=self.output_path
+                input_path=str(self.path_manager.get_input_path()),
+                output_path=str(self.path_manager.get_output_path())
             )
             
             # Show tool window and bring to front!
@@ -573,10 +559,10 @@ class GA4ToolsGUI(QMainWindow):
             tool.raise_()
             tool.activateWindow()
             
-            self.log(f"[OK] Tool launched successfully: {tool_info['name']}")
+            self.log(f"Tool launched successfully: {tool_info['name']}", category="TOOL", prefix="[OK]")
             
         except Exception as e:
-            self.log(f"[ERROR] Error launching tool: {e}", level="ERROR")
+            self.log(f"Error launching tool: {e}", category="TOOL", level="ERROR", prefix="[ERROR]")
             QMessageBox.critical(
                 self,
                 "Launch Error",
@@ -592,9 +578,8 @@ class GA4ToolsGUI(QMainWindow):
         )
         
         if folder:
-            self.input_path = folder
-            self.input_path_edit.setText(folder)
-            self.log(f"📥 Input folder set: {folder}")
+            self.path_manager.set_input_path(Path(folder))
+            self.log(f"Input folder set: {folder}", category="PATHS", prefix="📥")
     
     def browse_output_folder(self):
         """Browse for output folder"""
@@ -603,15 +588,14 @@ class GA4ToolsGUI(QMainWindow):
             "Select Output Folder",
             self.output_path
         )
-        
+
         if folder:
-            self.output_path = folder
-            self.output_path_edit.setText(folder)
-            self.log(f"📤 Output folder set: {folder}")
+            self.path_manager.set_output_path(Path(folder))
+            self.log(f"Output folder set: {folder}", category="PATHS", prefix="📤")
     
     def on_theme_changed(self, theme_name: str):
         """Handle theme change"""
-        self.log(f"🎨 Changing theme to: {theme_name}")
+        self.log(f"Changing theme to: {theme_name}", category="THEME", prefix="🎨")
         self.apply_theme(theme_name)
         
         # Notify all open tools to refresh their themes
@@ -650,10 +634,40 @@ class GA4ToolsGUI(QMainWindow):
             
             # Safe logging
             safe_theme_name = theme_name.encode('ascii', 'ignore').decode('ascii') if theme_name else "Unknown"
-            self.log(f"[OK] Theme applied: {safe_theme_name} with NEW system!")
+            self.log(f"Theme applied: {safe_theme_name} with NEW system!", category="THEME", prefix="[OK]")
             
         except Exception as e:
-            self.log(f"[ERROR] Failed to apply theme: {e}", "ERROR")
+            self.log(f"Failed to apply theme: {e}", category="THEME", level="ERROR", prefix="[ERROR]")
+
+    def on_paths_updated(self, input_path: Path, output_path: Path):
+        """Synchronize local state and UI when shared paths change."""
+        input_str = str(input_path)
+        output_str = str(output_path)
+
+        self.input_path = input_str
+        self.output_path = output_str
+
+        if hasattr(self, 'input_path_edit') and self.input_path_edit.text() != input_str:
+            self.input_path_edit.setText(input_str)
+        if hasattr(self, 'output_path_edit') and self.output_path_edit.text() != output_str:
+            self.output_path_edit.setText(output_str)
+
+    def closeEvent(self, event):
+        """Release shared path listeners on close."""
+        if self._path_listener_registered:
+            try:
+                self.path_manager.unregister_listener(self.on_paths_updated)
+            except Exception:
+                pass
+            finally:
+                self._path_listener_registered = False
+        if hasattr(self, "log_manager"):
+            try:
+                self.log_manager.log_event("GUI", "Main window closed.", "INFO")
+                self.log_manager.end_session()
+            except Exception:
+                pass
+        super().closeEvent(event)
 
 
 def main():

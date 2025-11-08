@@ -98,63 +98,42 @@ styles/
 
 **Three-Tier Logging:**
 
-1. **GUI Application Logs** (`gui_logs/gui_execution_log_*.txt`)
-   - Main application lifecycle
-   - Tool launches and closes
-   - Errors and warnings
+1. **Session Logs** (`gui_logs/gui_session_log_YYYYMMDD_HHMMSSA.txt`)
+   - Entire GUI run (launch → exit) with per-event categories
+   - Sequence letter (`A`, `B`, …) resets daily
+   - Includes theme switches, path changes, tool launches, warnings
 
-2. **Tool-Specific Session Logs** (`gui_logs/{tool}_session_*.txt`)
-   - Individual tool execution details
-   - Step-by-step progress
-   - Debug information
+2. **Tool Session Logs** (`gui_logs/{tool}_session_*.txt`)
+   - Detailed run summaries written by individual tools
+   - Worker statistics, success/failure counts, durations
 
-3. **Output Session Logs** (`execution test/Output/{session}/execution_log.txt`)
-   - Final execution summaries
-   - File outputs
-   - Success/failure counts
+3. **Output Execution Logs** (`execution_test/Output/{run}/execution_log.txt`)
+   - Saved alongside cleaned/exported datasets
+   - Mirrors the on-screen execution footer
 
 ### Logging Implementation
 
-**Setup Pattern (from main.py):**
+**Session Setup (main.py):**
 ```python
-def setup_logging(self):
-    """Setup comprehensive logging system"""
-    logs_dir = Path(__file__).parent / "gui_logs"
-    logs_dir.mkdir(exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = logs_dir / f"gui_execution_log_{timestamp}.txt"
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+from styles import get_log_manager
+
+def __init__(self):
+    self.log_manager = get_log_manager()
+    self.log_manager.start_session()
+    self.log_manager.log_event("GUI", "[INIT] GA4 Tools GUI Initializing…")
 ```
 
-**Logging Conventions:**
-- `[TIMESTAMP]` prefix for GUI logs
-- Emoji indicators for visual scanning
-- `→ Step X:` for process steps
-- `✓` for success, `❌` for errors
-- `⚠️` for warnings
-
-**Tool Logging Pattern:**
+**Tool Logging Pattern (BaseToolDialog):**
 ```python
-def log(self, message, level="INFO"):
-    """Log to both file and GUI"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    formatted = f"[{timestamp}] {message}"
-    
-    if level == "ERROR":
-        self.logger.error(formatted)
-    elif level == "WARNING":
-        self.logger.warning(formatted)
-    else:
-        self.logger.info(formatted)
+class MyTool(PathConfigMixin, BaseToolDialog):
+    def __init__(...):
+        super().__init__(...)
+        self.execution_log = self.create_execution_log(layout)
+
+    def some_action(self):
+        self.log("🚀 Action started!")          # Session log + footer
+        self.log("⚠️ Potential issue", level="WARNING")
+        self.log("✅ Finished!", level="INFO")
 ```
 
 **Execution Log Footer Component:**
@@ -163,6 +142,7 @@ def log(self, message, level="INFO"):
 - Reset button (clear log display)
 - Save button (save to file)
 - Located in `styles/components/execution_log_footer.py`
+- Signals `log_cleared` / `log_saved` automatically propagate to the session log
 
 ---
 
@@ -390,34 +370,34 @@ except Exception as e:
 
 **Required Interface:**
 ```python
-class MyTool(QDialog):
+from tools.templates import BaseToolDialog, PathConfigMixin
+
+
+class MyTool(PathConfigMixin, BaseToolDialog):
+    PATH_CONFIG = {"show_input": True, "show_output": True}
+
     def __init__(self, parent, input_path, output_path):
-        """
-        Args:
-            parent: Main GUI window (for theme inheritance)
-            input_path: Default input directory
-            output_path: Default output directory
-        """
-        super().__init__(parent)
-        self.parent_window = parent
-        self.input_path = input_path
-        self.output_path = output_path
-        self.current_theme = None  # Set from parent
-        self.logger = None  # Initialize in setup_logging()
-        
-        # Setup
-        self.setup_logging()
-        self.setup_window_properties()
+        super().__init__(parent, input_path, output_path)
+
+        # Window + UI
+        self.setup_window_properties("✨ My Tool", width=900, height=600)
         self.setup_ui()
         self.apply_theme()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Hello, world!"))
+
+        self.execution_log = self.create_execution_log(layout)
+        if self.execution_log:
+            self.log("Tool initialized. 🌊")
 ```
 
 **Required Methods:**
-- `setup_logging()` - Initialize tool-specific logger
-- `setup_window_properties()` - Set window title, size
+- `setup_window_properties()` - Set window title & size
 - `setup_ui()` - Build all UI elements
-- `apply_theme()` - Apply current theme
-- `refresh_theme()` - Update theme when flask changes (optional but recommended)
+- `apply_theme()` - Apply current theme after layout
+- `refresh_theme()` - Update theme after main window switch (optional)
 
 ### Naming Conventions
 
@@ -436,15 +416,10 @@ class MyTool(QDialog):
 4. Style imports
 
 ```python
-import sys
-from pathlib import Path
-from datetime import datetime
+from PySide6.QtWidgets import QVBoxLayout, QLabel
 
-from PySide6.QtWidgets import QDialog
-from playwright.async_api import async_playwright
-
-from styles import get_theme_manager, hex_to_rgba
-from styles.components import ExecutionLogFooter
+from tools.templates import BaseToolDialog, PathConfigMixin
+from styles import get_theme_manager
 ```
 
 ### Error Handling

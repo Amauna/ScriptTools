@@ -93,7 +93,7 @@ class NewToolTemplate(BaseToolDialog):
         # Add execution log footer - automatically themed!
         self.execution_log = self.create_execution_log(main_layout)
         if self.execution_log:
-            self.execution_log.log("Tool initialized! 🌊")
+            self.log("Tool initialized! 🌊")
     
     def do_something(self):
         """Your tool's main action"""
@@ -102,14 +102,14 @@ class NewToolTemplate(BaseToolDialog):
         
         # Log it
         if self.execution_log:
-            self.execution_log.log(f"User entered: {user_input}")
+            self.log(f"User entered: {user_input}")
         
         # Do your tool's logic here...
         # ...
         
         # Log success
         if self.execution_log:
-            self.execution_log.log("✅ Action completed!")
+            self.log("✅ Action completed!")
 
 
 # ===== STANDALONE TEST =====
@@ -133,11 +133,14 @@ def main():
     
     parent = DummyParent()
     
-    # Create tool
+    # Create tool using shared PathManager defaults
+    from styles import get_path_manager
+
+    path_manager = get_path_manager()
     tool = NewToolTemplate(
         parent,
-        str(Path.home() / "Documents"),
-        str(Path.cwd() / "Output")
+        str(path_manager.get_input_path()),
+        str(path_manager.get_output_path())
     )
     
     tool.show()

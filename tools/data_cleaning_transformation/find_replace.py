@@ -22,10 +22,12 @@ from PySide6.QtGui import QFont, QColor
 
 # Import theme system if available
 try:
-    from styles import get_theme_manager
+    from styles import get_theme_manager, get_path_manager, get_log_manager
     THEME_AVAILABLE = True
 except Exception:
     THEME_AVAILABLE = False
+    get_path_manager = None  # type: ignore
+    get_log_manager = lambda: None  # type: ignore
 
 
 class CSVAnalysisResult:
@@ -366,12 +368,22 @@ class BigQueryCSVCleaner(QDialog):
         super().__init__(parent)
 
         # Paths
-        self.input_path = Path(input_path) if input_path else Path.cwd()
+        self.path_manager = get_path_manager()
+        if self.path_manager is None:
+            raise RuntimeError("PathManager is required for BigQueryCSVCleaner")
+
+        self._path_listener_registered = False
+
+        resolved_input = Path(input_path).expanduser().resolve() if input_path else self.path_manager.get_input_path()
+        resolved_output = Path(output_path).expanduser().resolve() if output_path else self.path_manager.get_output_path()
+
+        self.input_path = resolved_input
+        self.output_path = resolved_output
+
+        if input_path:
+            self.path_manager.set_input_path(resolved_input)
         if output_path:
-            self.output_path = Path(output_path)
-        else:
-            # Default output same as input
-            self.output_path = self.input_path
+            self.path_manager.set_output_path(resolved_output)
 
         # Theme
         self.current_theme = None
@@ -385,9 +397,24 @@ class BigQueryCSVCleaner(QDialog):
         self.analysis_complete = False
         self.analysis_results: List[CSVAnalysisResult] = []
 
+        self.log_manager = None
+        self.log_category = f"TOOL:{self.__class__.__name__}"
+        try:
+            if callable(get_log_manager):
+                self.log_manager = get_log_manager()
+        except Exception:
+            self.log_manager = None
+
         self._setup_window()
         self._setup_ui()
         self._apply_theme()
+
+        self.path_manager.register_listener(self._handle_paths_changed)
+        self._path_listener_registered = True
+        self._handle_paths_changed(
+            self.path_manager.get_input_path(),
+            self.path_manager.get_output_path()
+        )
 
     def _setup_window(self):
         self.setWindowTitle("🧹 BigQuery CSV Cleaner")
@@ -577,23 +604,30 @@ class BigQueryCSVCleaner(QDialog):
             self.current_theme = parent.current_theme
             self._apply_theme()
 
-    def _log(self, message: str):
+    def _log(self, message: str, level: str = "INFO"):
+        if getattr(self, "log_manager", None):
+            try:
+                self.log_manager.log_event(self.log_category, message, level)
+            except Exception:
+                pass
+
         ts = datetime.now().strftime("%H:%M:%S")
-        self.log_area.append(f"[{ts}] {message}")
+        if hasattr(self, "log_area"):
+            self.log_area.append(f"[{ts}] {message}")
 
     def _browse_input(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Input Folder", str(self.input_path))
         if folder:
-            self.input_path = Path(folder)
-            self.in_edit.setText(str(self.input_path))
-            self._log(f"📂 Input folder selected: {self.input_path}")
+            new_path = Path(folder).expanduser().resolve()
+            self.path_manager.set_input_path(new_path)
+            self._log(f"📂 Input folder selected: {new_path}")
 
     def _browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder", str(self.output_path))
         if folder:
-            self.output_path = Path(folder)
-            self.out_edit.setText(str(self.output_path))
-            self._log(f"📂 Output folder selected: {self.output_path}")
+            new_path = Path(folder).expanduser().resolve()
+            self.path_manager.set_output_path(new_path)
+            self._log(f"📂 Output folder selected: {new_path}")
 
     def _scan_folder(self):
         p = Path(self.in_edit.text())
@@ -684,20 +718,21 @@ class BigQueryCSVCleaner(QDialog):
         replace_text = self.repl_edit.text()
 
         # Output folder rotation
-        current_output = Path(self.out_edit.text())
-        default_base = Path.cwd() / "execution test" / "Output"
-        if str(current_output).startswith(str(default_base)):
+        current_output = Path(self.out_edit.text()).expanduser().resolve()
+        base_output = self.path_manager.get_output_path()
+        if current_output == base_output:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_output = default_base / f"find_replace_{ts}"
+            new_output = base_output / f"find_replace_{ts}"
             new_output.mkdir(parents=True, exist_ok=True)
             self.output_path = new_output
-            self.out_edit.setText(str(self.output_path))
+            self.path_manager.set_output_path(new_output)
             self._log(f"📁 Created new output folder: {self.output_path}")
         else:
             self.output_path = current_output
             if not self.output_path.exists():
                 self.output_path.mkdir(parents=True, exist_ok=True)
                 self._log(f"📁 Created output folder: {self.output_path}")
+            self.path_manager.set_output_path(self.output_path)
 
         # Prepare worker with cleaning options
         cleaning_options = {
@@ -784,6 +819,14 @@ class BigQueryCSVCleaner(QDialog):
             self._log(f"❌ Failed to save log: {e}")
 
     def closeEvent(self, event):
+        if self._path_listener_registered and self.path_manager:
+            try:
+                self.path_manager.unregister_listener(self._handle_paths_changed)
+            except Exception:
+                pass
+            finally:
+                self._path_listener_registered = False
+
         if self.is_running and self.worker:
             reply = QMessageBox.question(
                 self, "Confirm Close", "Operation in progress. Close anyway?", QMessageBox.Yes | QMessageBox.No
@@ -795,7 +838,25 @@ class BigQueryCSVCleaner(QDialog):
             if self.worker_thread and self.worker_thread.isRunning():
                 self.worker_thread.quit()
                 self.worker_thread.wait(2000)
-        event.accept()
+        if getattr(self, "log_manager", None):
+            try:
+                self.log_manager.log_event(self.log_category, "Tool dialog closed.", "INFO")
+            except Exception:
+                pass
+        super().closeEvent(event)
+
+    def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
+        """Keep local path state aligned with the global path manager."""
+        self.input_path = input_path
+        self.output_path = output_path
+
+        input_text = str(input_path)
+        output_text = str(output_path)
+
+        if hasattr(self, 'in_edit') and self.in_edit.text() != input_text:
+            self.in_edit.setText(input_text)
+        if hasattr(self, 'out_edit') and self.out_edit.text() != output_text:
+            self.out_edit.setText(output_text)
 
 
 def main():

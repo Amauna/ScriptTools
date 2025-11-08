@@ -114,7 +114,7 @@ class MyTool(BaseToolDialog):
         
         # Add execution log
         self.execution_log = self.create_execution_log(layout)
-        self.execution_log.log("Tool ready! 🌊")
+        self.log("Tool ready! 🌊")
 ```
 
 **That's it! 20 lines and you have a themed tool!** 🎉

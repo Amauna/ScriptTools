@@ -45,6 +45,7 @@ class ExecutionLogFooter(QFrame):
     
     # Signals for communication with parent tool
     log_cleared = Signal()
+    log_appended = Signal(str)
     log_saved = Signal(str)  # Emits file path when saved
     
     def __init__(self, parent=None, output_path: Optional[str] = None):
@@ -130,6 +131,9 @@ class ExecutionLogFooter(QFrame):
             self.log_text.verticalScrollBar().setValue(
                 self.log_text.verticalScrollBar().maximum()
             )
+
+        # Notify listeners
+        self.log_appended.emit(formatted_message)
     
     def copy_log(self):
         """Copy all logs to clipboard"""
