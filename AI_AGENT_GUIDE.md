@@ -60,17 +60,17 @@
 
 ```
 tools/
-├── data_collection_import/      # Looker Studio
-├── data_cleaning_transformation/
+├── data_collection_import/         # Looker Studio
+├── data_cleaning_transformation/   # e.g. column_order_harmonizer.py
 ├── data_merging_joining/
 ├── data_export_formatting/
 ├── report_generation_visualization/
 ├── date_time_utilities/
 ├── ga4_specific_analysis/
-├── data_validation_quality/
+├── data_validation_quality/        # e.g. bigquery_transfer_diagnostics.py
 ├── automation_scheduling/
 ├── file_management_organization/
-└── templates/                   # Base templates for new tools
+└── templates/                      # Base templates for new tools
 ```
 
 **Pattern:** Each category folder contains tool modules that follow a consistent interface.

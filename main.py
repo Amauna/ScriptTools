@@ -162,10 +162,11 @@ class GA4ToolsGUI(QMainWindow):
         path_layout.addWidget(input_label)
         
         self.input_path_edit = QLineEdit(self.input_path)
-        self.input_path_edit.setReadOnly(True)
+        self.input_path_edit.setReadOnly(False)
         self.input_path_edit.setMinimumWidth(250)
+        self.input_path_edit.editingFinished.connect(self.on_input_path_edited)
         path_layout.addWidget(self.input_path_edit)
-        
+
         input_browse_btn = QPushButton("Browse")
         input_browse_btn.setObjectName("glassBut")
         input_browse_btn.clicked.connect(self.browse_input_folder)
@@ -180,10 +181,11 @@ class GA4ToolsGUI(QMainWindow):
         path_layout.addWidget(output_label)
         
         self.output_path_edit = QLineEdit(self.output_path)
-        self.output_path_edit.setReadOnly(True)
+        self.output_path_edit.setReadOnly(False)
         self.output_path_edit.setMinimumWidth(250)
+        self.output_path_edit.editingFinished.connect(self.on_output_path_edited)
         path_layout.addWidget(self.output_path_edit)
-        
+
         output_browse_btn = QPushButton("Browse")
         output_browse_btn.setObjectName("glassButton")
         output_browse_btn.clicked.connect(self.browse_output_folder)
@@ -500,6 +502,12 @@ class GA4ToolsGUI(QMainWindow):
                 {"name": "Audience Segmentation", "description": "Create and analyze user segments", "module": None, "class": None}
             ],
             "data_validation_quality": [
+                {
+                    "name": "BigQuery Transfer Diagnostics",
+                    "description": "🛡️ Scan CSV batches for BigQuery transfer issues with concise reports",
+                    "module": "tools.data_validation_quality.bigquery_transfer_diagnostics",
+                    "class": "BigQueryTransferDiagnostics"
+                },
                 {"name": "Schema Validator", "description": "Validate data against expected schema", "module": None, "class": None},
                 {"name": "Completeness Checker", "description": "Check for missing required fields", "module": None, "class": None},
                 {"name": "Anomaly Detector", "description": "Detect outliers and unusual patterns", "module": None, "class": None},
@@ -547,11 +555,13 @@ class GA4ToolsGUI(QMainWindow):
             module = __import__(module_path, fromlist=[class_name])
             tool_class = getattr(module, class_name)
 
+            run_output_path = self.path_manager.create_tool_run_directory(tool_info["name"])
+
             # Create tool instance
             tool = tool_class(
                 parent=self,
                 input_path=str(self.path_manager.get_input_path()),
-                output_path=str(self.path_manager.get_output_path())
+                output_path=str(run_output_path)
             )
             
             # Show tool window and bring to front!
@@ -592,6 +602,40 @@ class GA4ToolsGUI(QMainWindow):
         if folder:
             self.path_manager.set_output_path(Path(folder))
             self.log(f"Output folder set: {folder}", category="PATHS", prefix="📤")
+
+    def on_input_path_edited(self):
+        """Handle manual edits to the input path field."""
+        text = self.input_path_edit.text()
+        try:
+            resolved = self.path_manager.resolve_input_path(text)
+        except FileNotFoundError as exc:
+            QMessageBox.warning(
+                self,
+                "Invalid Path",
+                f"Input path does not exist:\n{exc}",
+            )
+            self.input_path_edit.setText(self.input_path)
+            return
+
+        self.path_manager.set_input_path(resolved)
+        self.log(f"Input folder set manually: {resolved}", category="PATHS", prefix="📥")
+
+    def on_output_path_edited(self):
+        """Handle manual edits to the output path field."""
+        text = self.output_path_edit.text()
+        try:
+            resolved = self.path_manager.resolve_output_path(text)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Unable to Use Path",
+                f"Could not use the provided output path:\n{exc}",
+            )
+            self.output_path_edit.setText(self.output_path)
+            return
+
+        self.path_manager.set_output_path(resolved)
+        self.log(f"Output folder set manually: {resolved}", category="PATHS", prefix="📤")
     
     def on_theme_changed(self, theme_name: str):
         """Handle theme change"""

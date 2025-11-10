@@ -11,6 +11,36 @@ Keep your masterpieces safe, Bry. This guide walks you through saving local chan
 
 ---
 
+## Importing the Repo into Cursor (fresh clone)
+Pick the style that fits the moment—terminal or Cursor’s UI. Either way, you end up in the same beautiful workspace.
+
+### Option A: Terminal first, then open in Cursor
+```bash
+# 1. Pick a folder where you want the repo
+cd "C:\Users\AM - Shift\Documents\Scripts For Modifying\Projects"
+
+# 2. Clone the GitHub repo
+git clone https://github.com/afaaubry/Script-Tools.git
+
+# 3. Enter the project
+cd Script-Tools
+
+# 4. Launch Cursor pointing at this folder (optional if you open it manually)
+cursor .
+```
+Now Cursor opens the project with the full Git history ready for branching.
+
+### Option B: Clone directly from inside Cursor
+1. Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+2. Run **GitHub: Clone Repository**.
+3. Paste `https://github.com/afaaubry/Script-Tools.git`.
+4. Choose a local folder and wait for the clone to finish.
+
+When Cursor prompts you, open the cloned workspace. Already have it cloned? Just run `git pull` in the built-in terminal to sync before you continue.
+*** End Patch
+
+---
+
 ## 1. Create and Switch to a New Branch
 Pick a name that reflects the feature or fixes:
 

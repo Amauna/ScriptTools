@@ -13,16 +13,52 @@ from typing import Callable, List, Optional
 PathListener = Callable[[Path, Path], None]
 
 
+def _sanitize_tool_name(raw_name: str) -> str:
+    """Return a filesystem-friendly representation of a tool name."""
+    import re
+
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", raw_name).strip("_")
+    return cleaned or "Tool"
+
+
+def _ensure_directory(path: Path) -> Path:
+    """Create the provided path (including parents) if it does not exist."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _ensure_tool_output_root(base_output: Path, tool_name: str) -> Path:
+    """Ensure the parent output directory for a tool exists and return it."""
+    tool_root = base_output / tool_name
+    return _ensure_directory(tool_root)
+
+
+def _create_timestamped_subdir(parent: Path) -> Path:
+    """Create a unique timestamped subdirectory under ``parent`` and return it."""
+    from datetime import datetime
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    candidate = parent / timestamp
+    index = 1
+
+    while candidate.exists():
+        candidate = parent / f"{timestamp}_{index:02d}"
+        index += 1
+
+    candidate.mkdir(parents=True, exist_ok=False)
+    return candidate
+
+
 class PathManager:
     """Maintain shared input/output directory state across the suite."""
 
     def __init__(self) -> None:
-        project_root = Path(__file__).resolve().parents[3]
-        default_output = project_root / "execution_test" / "Output"
-        default_output.mkdir(parents=True, exist_ok=True)
+        project_root = Path(__file__).resolve().parents[2]
+        execution_root = _ensure_directory(project_root / "execution_test" / "Output")
 
+        self._project_root: Path = project_root
         self._input_path: Path = (Path.home() / "Documents").resolve()
-        self._output_path: Path = default_output.resolve()
+        self._output_path: Path = execution_root.resolve()
         self._listeners: List[PathListener] = []
 
     def get_input_path(self) -> Path:
@@ -58,6 +94,7 @@ class PathManager:
 
         if output_path is not None:
             resolved_output = Path(output_path).expanduser().resolve()
+            _ensure_directory(resolved_output)
             if resolved_output != self._output_path:
                 self._output_path = resolved_output
                 changed = True
@@ -74,6 +111,70 @@ class PathManager:
         """Remove a previously registered listener."""
         if listener in self._listeners:
             self._listeners.remove(listener)
+
+    # ------------------------------------------------------------------
+    # Path resolution helpers
+    # ------------------------------------------------------------------
+    def resolve_input_path(self, raw_text: str) -> Path:
+        """
+        Validate and resolve an input path provided by the user.
+
+        Args:
+            raw_text: Text entered by the user.
+
+        Returns:
+            Resolved absolute Path.
+
+        Raises:
+            FileNotFoundError: If the path does not exist.
+        """
+        text = (raw_text or "").strip()
+        if not text:
+            return self._input_path
+
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            candidate = candidate.resolve()
+
+        if not candidate.exists():
+            raise FileNotFoundError(f"Input path does not exist: {candidate}")
+
+        return candidate
+
+    def resolve_output_path(self, raw_text: str) -> Path:
+        """
+        Validate (and create if necessary) an output path provided by the user.
+
+        Args:
+            raw_text: Text entered by the user.
+
+        Returns:
+            Resolved absolute Path.
+        """
+        text = (raw_text or "").strip()
+        if not text:
+            return self._output_path
+
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            candidate = candidate.resolve()
+
+        _ensure_directory(candidate)
+        return candidate
+
+    def create_tool_run_directory(self, tool_name: str) -> Path:
+        """
+        Produce a unique timestamped output folder for a tool run.
+
+        Args:
+            tool_name: Human-readable tool name.
+
+        Returns:
+            Newly created run directory Path.
+        """
+        sanitized = _sanitize_tool_name(tool_name)
+        tool_root = _ensure_tool_output_root(self._output_path, sanitized)
+        return _create_timestamped_subdir(tool_root)
 
     def _notify_listeners(self) -> None:
         """Invoke all listeners with the latest paths."""

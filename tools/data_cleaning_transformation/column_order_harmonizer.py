@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import csv
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QObject, QThread, Signal
 from PySide6.QtGui import QFont
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import pandas as pd
 
 from tools.templates import BaseToolDialog, PathConfigMixin
 
@@ -83,6 +85,8 @@ class ColumnOrderWorker(QObject):
         remove_extra_columns: bool,
         input_path: Path,
         output_path: Path,
+        chunksize: int = 100_000,
+        max_workers: int = 8,
     ) -> None:
         super().__init__()
         self.files = files
@@ -90,135 +94,211 @@ class ColumnOrderWorker(QObject):
         self.remove_extra_columns = remove_extra_columns
         self.input_path = input_path
         self.output_path = output_path
+        self.chunksize = chunksize
+        self.max_workers = max_workers
+        self._stop = False
 
     def run(self) -> None:
-        result = HarmonizerResult()
+        result_success = 0
+        result_failed = 0
         total = len(self.files)
 
-        for index, file_path in enumerate(self.files, start=1):
-            self.progress_signal.emit(index - 1, total)
-            relative_name = file_path.name
-            self.status_signal.emit(f"Processing {relative_name}")
-            self.log_signal.emit(f"🔄 Reordering columns for {relative_name}")
-
-            try:
-                duplicates_removed, extras_removed = self._process_file(file_path)
-            except Exception as exc:  # pragma: no cover - runtime safety
-                result.failed += 1
-                self.log_signal.emit(
-                    f"❌ Failed to process {relative_name}: {exc}"
-                )
-            else:
-                result.success += 1
-                if duplicates_removed:
-                    self.log_signal.emit(
-                        f"🧹 Removed {duplicates_removed} duplicate column(s) from {relative_name}"
-                    )
-                if extras_removed:
-                    self.log_signal.emit(
-                        f"✂️ Removed {extras_removed} column(s) not listed in preset from {relative_name}"
-                    )
-                self.log_signal.emit(
-                    f"✅ Column order updated for {relative_name}"
-                )
-                result.duplicates_removed += duplicates_removed
-                result.extras_removed += extras_removed
-
-            self.progress_signal.emit(index, total)
-
-        self.finished_signal.emit(result.success, result.failed)
-
-    def _process_file(self, file_path: Path) -> tuple[int, int]:
-        with file_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.reader(handle)
-            try:
-                header = next(reader)
-            except StopIteration:
-                raise ValueError("Empty file")
-
-            all_rows = [row for row in reader]
-
-        cleaned_header, index_map, duplicates_removed = self._deduplicate_columns(
-            header, all_rows
+        self.log_signal.emit(
+            f"🚀 Starting harmonization of {total} file(s) (chunksize={self.chunksize})"
         )
-        ordered_header = self._build_header(cleaned_header)
 
-        if not ordered_header:
-            raise ValueError(f"No valid columns detected in {file_path.name}")
+        workers = min(self.max_workers, max(1, total))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {
+                ex.submit(self._process_file, file_path): file_path for file_path in self.files
+            }
+            completed = 0
+            for fut in as_completed(futures):
+                if self._stop:
+                    break
+                file_path = futures[fut]
+                completed += 1
+                try:
+                    success, failed = fut.result()
+                    result_success += success
+                    result_failed += failed
+                    if success:
+                        self.log_signal.emit(f"✅ Column order updated for {file_path.name}")
+                except Exception as exc:
+                    result_failed += 1
+                    self.log_signal.emit(f"❌ Failed to process {file_path.name}: {exc}")
 
-        rows: List[List[str]] = []
-        for row in all_rows:
-            row_dict = self._row_to_dict(row, index_map, cleaned_header)
-            rows.append([row_dict.get(column, "") for column in ordered_header])
+                self.progress_signal.emit(completed, total)
+                self.status_signal.emit(f"Processed {completed}/{total}: {file_path.name}")
 
-        self.output_path.mkdir(parents=True, exist_ok=True)
-        output_file = self.output_path / file_path.name
-        with output_file.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(ordered_header)
-            writer.writerows(rows)
-        extras_removed = len(cleaned_header) - len(ordered_header)
-        return duplicates_removed, extras_removed
+        self.finished_signal.emit(result_success, result_failed)
 
-    @staticmethod
-    def _deduplicate_columns(
-        header: List[str], rows: List[List[str]]
-    ) -> tuple[List[str], List[int], int]:
-        cleaned_header: List[str] = []
-        index_map: List[int] = []
-        seen: Dict[tuple[str, tuple[str, ...]], int] = {}
-        duplicates_removed = 0
+    def stop(self) -> None:
+        self._stop = True
 
-        for idx, column in enumerate(header):
-            normalized = column.strip()
-            if not normalized:
-                duplicates_removed += 1
-                continue
+    def _normalize_cols(self, cols: List[str]) -> List[str]:
+        return [c.strip() for c in cols]
 
-            column_values = tuple(
-                row[idx] if idx < len(row) else "" for row in rows
+    def _process_file(self, file_path: Path) -> Tuple[int, int]:
+        try:
+            with file_path.open("r", encoding="utf-8-sig", newline="") as fh:
+                raw_header = next(csv.reader(fh), [])
+                if not raw_header:
+                    self.log_signal.emit(f"❌ Empty file: {file_path.name}")
+                    return 0, 1
+
+            reader = pd.read_csv(
+                file_path,
+                dtype=str,
+                encoding="utf-8-sig",
+                low_memory=False,
+                chunksize=self.chunksize,
+                keep_default_na=False,
             )
-            key = (normalized, column_values)
-            if key in seen:
-                duplicates_removed += 1
-                continue
 
-            seen[key] = idx
-            cleaned_header.append(normalized)
-            index_map.append(idx)
+            try:
+                first_chunk = next(reader)
+                first_chunk.columns = self._normalize_cols(list(first_chunk.columns))
+            except StopIteration:
+                self.log_signal.emit(f"❌ Empty file: {file_path.name}")
+                return 0, 1
 
-        return cleaned_header, index_map, duplicates_removed
+            original_header = [name.strip() for name in raw_header]
+            candidate_map: Dict[str, List[Tuple[int, str, str]]] = {}
+            for idx, (raw_name, df_col) in enumerate(zip(original_header, first_chunk.columns)):
+                key = raw_name.strip().lower()
+                candidate_map.setdefault(key, []).append((idx, df_col, raw_name))
 
-    def _build_header(self, cleaned_header: List[str]) -> List[str]:
-        desired: List[str] = []
-        remaining: List[str] = []
+            expected_normalized = [col.strip().lower() for col in self.column_sequence]
+            expected_set = set(expected_normalized)
 
-        desired_set = set()
-        for column in self.column_sequence:
-            normalized = column.strip()
-            if not normalized:
-                continue
-            if normalized in cleaned_header and normalized not in desired_set:
-                desired.append(normalized)
-                desired_set.add(normalized)
+            selected_ga4: Dict[str, Tuple[str, str]] = {}
+            duplicates_removed = 0
+            missing_columns: List[str] = []
 
-        if self.remove_extra_columns:
-            return desired
+            for display_name, norm in zip(self.column_sequence, expected_normalized):
+                candidates = candidate_map.get(norm, [])
+                if not candidates:
+                    missing_columns.append(display_name)
+                    continue
+                df_col, _, raw_name = self._choose_best_column(candidates, first_chunk)
+                selected_ga4[display_name] = (df_col, raw_name.strip())
+                duplicates_removed += max(0, len(candidates) - 1)
 
-        for column in cleaned_header:
-            if column not in desired_set:
-                remaining.append(column)
-        return desired + remaining
+            extras_preserved: List[Tuple[str, str]] = []
+            if not self.remove_extra_columns:
+                for norm, candidates in candidate_map.items():
+                    if norm in expected_set:
+                        continue
+                    if not candidates:
+                        continue
+                    df_col, _, raw_name = self._choose_best_column(candidates, first_chunk)
+                    extras_preserved.append((raw_name.strip(), df_col))
+
+            extras_preserved.sort(key=lambda item: original_header.index(item[0]) if item[0] in original_header else 0)
+
+            extras_removed = 0
+            if self.remove_extra_columns:
+                extras_removed = len(extras_preserved)
+                extras_preserved = []
+
+            ordered_header = list(self.column_sequence)
+            if extras_preserved:
+                ordered_header.extend(name for name, _ in extras_preserved)
+
+            fresh_reader = pd.read_csv(
+                file_path,
+                dtype=str,
+                encoding="utf-8-sig",
+                low_memory=False,
+                chunksize=self.chunksize,
+                keep_default_na=False,
+            )
+
+            self.output_path.mkdir(parents=True, exist_ok=True)
+            output_file = self.output_path / file_path.name
+
+            header_written = False
+            wrote_any = False
+
+            for chunk in fresh_reader:
+                chunk.columns = self._normalize_cols(list(chunk.columns))
+                row_count = len(chunk.index)
+
+                output_columns: Dict[str, pd.Series] = {}
+                for display_name in self.column_sequence:
+                    df_col = selected_ga4.get(display_name, (None, display_name))[0]
+                    if df_col and df_col in chunk.columns:
+                        output_columns[display_name] = chunk[df_col].astype(str)
+                    else:
+                        output_columns[display_name] = pd.Series([""] * row_count)
+
+                for extra_name, df_col in extras_preserved:
+                    if df_col in chunk.columns:
+                        output_columns[extra_name] = chunk[df_col].astype(str)
+                    else:
+                        output_columns[extra_name] = pd.Series([""] * row_count)
+
+                out_chunk = pd.DataFrame(output_columns, columns=ordered_header)
+                mode = "a" if header_written else "w"
+                out_chunk.to_csv(
+                    output_file,
+                    index=False,
+                    mode=mode,
+                    header=not header_written,
+                    encoding="utf-8-sig",
+                )
+                header_written = True
+                wrote_any = True
+
+            if not wrote_any:
+                with output_file.open("w", encoding="utf-8-sig", newline="") as fh:
+                    writer = csv.writer(fh)
+                    writer.writerow(ordered_header)
+
+            if missing_columns:
+                self.log_signal.emit(
+                    f"⚠️ Missing columns filled with blanks in {file_path.name}: {', '.join(missing_columns)}"
+                )
+
+            if extras_removed:
+                self.log_signal.emit(
+                    f"✂️ Dropped {extras_removed} column(s) not in preset from {file_path.name}"
+                )
+            elif extras_preserved:
+                extras_names = ", ".join(name for name, _ in extras_preserved)
+                self.log_signal.emit(
+                    f"➕ Preserved additional column(s) at end for {file_path.name}: {extras_names}"
+                )
+
+            if duplicates_removed:
+                self.log_signal.emit(
+                    f"🧹 Removed {duplicates_removed} duplicate/blank column(s) from {file_path.name}"
+                )
+
+            return 1, 0
+        except Exception as exc:
+            self.log_signal.emit(f"❌ Failed to process {file_path.name}: {exc}")
+            return 0, 1
 
     @staticmethod
-    def _row_to_dict(
-        row: List[str], index_map: List[int], header: List[str]
-    ) -> Dict[str, str]:
-        mapping: Dict[str, str] = {}
-        for column, source_index in zip(header, index_map):
-            value = row[source_index] if source_index < len(row) else ""
-            mapping[column] = value
-        return mapping
+    def _choose_best_column(
+        candidates: List[Tuple[int, str, str]], first_chunk: pd.DataFrame
+    ) -> Tuple[str, int, str]:
+        best_candidate = candidates[0]
+        best_score = -1
+
+        for idx, df_col, raw_name in candidates:
+            if df_col in first_chunk.columns:
+                score = first_chunk[df_col].astype(str).str.strip().ne("").sum()
+            else:
+                score = 0
+
+            if score > best_score:
+                best_candidate = (df_col, idx, raw_name)
+                best_score = score
+
+        return best_candidate
 
 
 class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):

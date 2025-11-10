@@ -80,6 +80,7 @@ GA4 Script Tools/
 - **`column_order_harmonizer.py` — Column Order Harmonizer**
   - 📁 Scans the input folder for CSVs, displaying column counts and status per file at a glance.
   - 🧭 Applies curated presets (or custom sequences) to reorder headers, strip duplicates, and append any remaining columns intelligently.
+  - 🧱 Guarantees canonical GA4 ordering (and fills missing columns with blanks) before anything hits diagnostics or BigQuery.
   - 🔄 Executes harmonization in a QThread worker with live progress, status updates, and execution log streaming.
   - ✍️ Saves reordered datasets to mirrored output folders so originals stay untouched.
 - **`find_replace.py` — BigQuery CSV Cleaner**
@@ -106,6 +107,12 @@ GA4 Script Tools/
   - ✏️ Applies prefix/suffix patterns with live previews so renaming rules stay predictable.
   - ♻️ Generates output copies instead of destructive renames, anchoring paths through the shared PathManager.
   - 📓 Captures every action in the execution log with reset/copy/save utilities for repeatable workflows.
+
+### ✅ Data Validation & Quality
+- **`bigquery_transfer_diagnostics.py` — BigQuery Transfer Diagnostics**
+  - 🛡️ Verifies every CSV against the canonical GA4 schema, flags misordered or missing headers, and highlights numeric cast failures before upload.
+  - 🔍 Reports the exact row/column causing trouble (e.g. decimals in `Engaged sessions`) with a minimalist `diagnostic_report.txt`.
+  - 📊 Supports filterable result tables (pass/warn/fail) and mirrors findings into the execution log for easy auditing.
 
 ## 🎨 Theme System
 
