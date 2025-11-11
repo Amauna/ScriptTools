@@ -8,11 +8,13 @@ from __future__ import annotations
 import csv
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QObject, QThread, Signal
+from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -72,6 +74,20 @@ class HarmonizerResult:
     extras_removed: int = 0
 
 
+@dataclass
+class ColumnCandidateInfo:
+    df_col: str
+    raw_name: str
+    original_index: int
+
+
+@dataclass
+class OutputColumnTracker:
+    non_empty_count: int = 0
+    total_rows: int = 0
+    rows_per_chunk: List[int] = field(default_factory=list)
+
+
 class ColumnOrderWorker(QObject):
     progress_signal = Signal(int, int)
     status_signal = Signal(str)
@@ -97,6 +113,7 @@ class ColumnOrderWorker(QObject):
         self.chunksize = chunksize
         self.max_workers = max_workers
         self._stop = False
+        self.results: List[Dict[str, str]] = []
 
     def run(self) -> None:
         result_success = 0
@@ -119,18 +136,24 @@ class ColumnOrderWorker(QObject):
                 file_path = futures[fut]
                 completed += 1
                 try:
-                    success, failed = fut.result()
-                    result_success += success
-                    result_failed += failed
+                    success, reason = fut.result()
                     if success:
+                        result_success += 1
                         self.log_signal.emit(f"✅ Column order updated for {file_path.name}")
+                        self.results.append({"file": file_path.name, "status": "success", "reason": ""})
+                    else:
+                        result_failed += 1
+                        self.results.append({"file": file_path.name, "status": "failed", "reason": reason or "Unknown failure"})
                 except Exception as exc:
                     result_failed += 1
-                    self.log_signal.emit(f"❌ Failed to process {file_path.name}: {exc}")
+                    message = f"❌ Failed to process {file_path.name}: {exc}"
+                    self.log_signal.emit(message)
+                    self.results.append({"file": file_path.name, "status": "failed", "reason": str(exc)})
 
                 self.progress_signal.emit(completed, total)
                 self.status_signal.emit(f"Processed {completed}/{total}: {file_path.name}")
 
+        self._write_report()
         self.finished_signal.emit(result_success, result_failed)
 
     def stop(self) -> None:
@@ -139,72 +162,76 @@ class ColumnOrderWorker(QObject):
     def _normalize_cols(self, cols: List[str]) -> List[str]:
         return [c.strip() for c in cols]
 
-    def _process_file(self, file_path: Path) -> Tuple[int, int]:
+    def _process_file(self, file_path: Path) -> Tuple[bool, Optional[str]]:
         try:
             with file_path.open("r", encoding="utf-8-sig", newline="") as fh:
                 raw_header = next(csv.reader(fh), [])
                 if not raw_header:
-                    self.log_signal.emit(f"❌ Empty file: {file_path.name}")
-                    return 0, 1
+                    reason = "Empty file"
+                    self.log_signal.emit(f"❌ {reason}: {file_path.name}")
+                    return False, reason
 
-            reader = pd.read_csv(
-                file_path,
-                dtype=str,
-                encoding="utf-8-sig",
-                low_memory=False,
-                chunksize=self.chunksize,
-                keep_default_na=False,
-            )
-
-            try:
-                first_chunk = next(reader)
-                first_chunk.columns = self._normalize_cols(list(first_chunk.columns))
-            except StopIteration:
-                self.log_signal.emit(f"❌ Empty file: {file_path.name}")
-                return 0, 1
-
-            original_header = [name.strip() for name in raw_header]
-            candidate_map: Dict[str, List[Tuple[int, str, str]]] = {}
-            for idx, (raw_name, df_col) in enumerate(zip(original_header, first_chunk.columns)):
-                key = raw_name.strip().lower()
-                candidate_map.setdefault(key, []).append((idx, df_col, raw_name))
+            trimmed_header = [name.strip() for name in raw_header]
+            candidate_map: Dict[str, List[ColumnCandidateInfo]] = {}
+            for idx, raw_name in enumerate(trimmed_header):
+                norm = raw_name.lower()
+                candidate_map.setdefault(norm, []).append(
+                    ColumnCandidateInfo(
+                        df_col=raw_name,
+                        raw_name=raw_name,
+                        original_index=idx,
+                    )
+                )
 
             expected_normalized = [col.strip().lower() for col in self.column_sequence]
             expected_set = set(expected_normalized)
 
-            selected_ga4: Dict[str, Tuple[str, str]] = {}
-            duplicates_removed = 0
             missing_columns: List[str] = []
+            ambiguous_columns: List[str] = []
+            selected_ga4: "OrderedDict[str, ColumnCandidateInfo]" = OrderedDict()
 
             for display_name, norm in zip(self.column_sequence, expected_normalized):
                 candidates = candidate_map.get(norm, [])
                 if not candidates:
                     missing_columns.append(display_name)
                     continue
-                df_col, _, raw_name = self._choose_best_column(candidates, first_chunk)
-                selected_ga4[display_name] = (df_col, raw_name.strip())
-                duplicates_removed += max(0, len(candidates) - 1)
+                if len(candidates) > 1:
+                    ambiguous_columns.append(display_name)
+                    continue
+                selected_ga4[display_name] = candidates[0]
 
-            extras_preserved: List[Tuple[str, str]] = []
-            if not self.remove_extra_columns:
-                for norm, candidates in candidate_map.items():
-                    if norm in expected_set:
-                        continue
-                    if not candidates:
-                        continue
-                    df_col, _, raw_name = self._choose_best_column(candidates, first_chunk)
-                    extras_preserved.append((raw_name.strip(), df_col))
+            if ambiguous_columns:
+                reason = f"Ambiguous columns detected: {', '.join(ambiguous_columns)}"
+                self.log_signal.emit(f"❌ {reason} in {file_path.name}")
+                return False, reason
 
-            extras_preserved.sort(key=lambda item: original_header.index(item[0]) if item[0] in original_header else 0)
+            if missing_columns:
+                reason = f"Missing required columns: {', '.join(missing_columns)}"
+                self.log_signal.emit(f"❌ {reason} in {file_path.name}")
+                return False, reason
 
-            extras_removed = 0
+            extras_preserved: List[ColumnCandidateInfo] = []
+            for norm, candidates in candidate_map.items():
+                if norm in expected_set:
+                    continue
+                if len(candidates) > 1:
+                    names = ", ".join(candidate.raw_name for candidate in candidates)
+                    self.log_signal.emit(
+                        f"⚠️ Duplicate non-contract columns detected ({names}) in {file_path.name}; using first occurrence."
+                    )
+                extras_preserved.append(candidates[0])
+
+            extras_preserved.sort(key=lambda candidate: candidate.original_index)
+
             if self.remove_extra_columns:
-                extras_removed = len(extras_preserved)
                 extras_preserved = []
 
-            ordered_header = list(self.column_sequence)
+            ordered_header = list(selected_ga4.keys())
+            extras_map: Dict[str, ColumnCandidateInfo] = {}
             if extras_preserved:
-                ordered_header.extend(name for name, _ in extras_preserved)
+                for candidate in extras_preserved:
+                    ordered_header.append(candidate.raw_name)
+                    extras_map[candidate.raw_name] = candidate
 
             fresh_reader = pd.read_csv(
                 file_path,
@@ -220,24 +247,43 @@ class ColumnOrderWorker(QObject):
 
             header_written = False
             wrote_any = False
+            output_trackers: Dict[str, OutputColumnTracker] = {
+                column_name: OutputColumnTracker() for column_name in ordered_header
+            }
+            total_rows_processed = 0
+            chunk_index = 0
+
+            self.log_signal.emit(f"📄 File: {file_path.name}")
 
             for chunk in fresh_reader:
                 chunk.columns = self._normalize_cols(list(chunk.columns))
                 row_count = len(chunk.index)
+                if row_count == 0:
+                    continue
 
                 output_columns: Dict[str, pd.Series] = {}
-                for display_name in self.column_sequence:
-                    df_col = selected_ga4.get(display_name, (None, display_name))[0]
-                    if df_col and df_col in chunk.columns:
-                        output_columns[display_name] = chunk[df_col].astype(str)
+                for display_name, candidate in selected_ga4.items():
+                    column_key = candidate.df_col
+                    if column_key in chunk.columns:
+                        series = chunk[column_key].astype(str)
                     else:
-                        output_columns[display_name] = pd.Series([""] * row_count)
+                        series = pd.Series([""] * row_count, dtype=str)
+                    tracker = output_trackers[display_name]
+                    tracker.total_rows += row_count
+                    tracker.non_empty_count += int(series.str.strip().ne("").sum())
+                    tracker.rows_per_chunk.append(row_count)
+                    output_columns[display_name] = series
 
-                for extra_name, df_col in extras_preserved:
-                    if df_col in chunk.columns:
-                        output_columns[extra_name] = chunk[df_col].astype(str)
+                for extra_name, candidate in extras_map.items():
+                    if candidate.df_col in chunk.columns:
+                        series = chunk[candidate.df_col].astype(str)
                     else:
-                        output_columns[extra_name] = pd.Series([""] * row_count)
+                        series = pd.Series([""] * row_count, dtype=str)
+                    tracker = output_trackers[extra_name]
+                    tracker.total_rows += row_count
+                    tracker.non_empty_count += int(series.str.strip().ne("").sum())
+                    tracker.rows_per_chunk.append(row_count)
+                    output_columns[extra_name] = series
 
                 out_chunk = pd.DataFrame(output_columns, columns=ordered_header)
                 mode = "a" if header_written else "w"
@@ -250,55 +296,175 @@ class ColumnOrderWorker(QObject):
                 )
                 header_written = True
                 wrote_any = True
+                chunk_index += 1
+                total_rows_processed += row_count
+                approx = f"~{self.chunksize:,}" if row_count >= self.chunksize else f"{row_count:,}"
+                self.log_signal.emit(
+                    f"   └─ Chunk {chunk_index}: processed {approx} rows (cumulative {total_rows_processed:,})"
+                )
 
             if not wrote_any:
                 with output_file.open("w", encoding="utf-8-sig", newline="") as fh:
                     writer = csv.writer(fh)
                     writer.writerow(ordered_header)
-
-            if missing_columns:
+                self.log_signal.emit("   └─ No data rows detected; header written only.")
+            else:
                 self.log_signal.emit(
-                    f"⚠️ Missing columns filled with blanks in {file_path.name}: {', '.join(missing_columns)}"
+                    f"   └─ Total rows processed: {total_rows_processed:,} across {chunk_index} chunk(s)"
+                )
+                self.log_signal.emit("   └─ Done update.")
+
+            validation_success = self._validate_output_file(
+                output_file=output_file,
+                ordered_header=ordered_header,
+                output_trackers=output_trackers,
+                total_rows_processed=total_rows_processed,
+            )
+            if not validation_success:
+                self.log_signal.emit(
+                    f"❌ Validation failed for {file_path.name}. Removing output file."
+                )
+                if output_file.exists():
+                    try:
+                        output_file.unlink()
+                    except Exception:
+                        pass
+                return False, "Validation failed"
+
+            if extras_preserved and not self.remove_extra_columns:
+                extras_names = ", ".join(candidate.raw_name for candidate in extras_preserved)
+                self.log_signal.emit(
+                    f"➕ Preserved additional column(s) appended in {file_path.name}: {extras_names}"
                 )
 
-            if extras_removed:
-                self.log_signal.emit(
-                    f"✂️ Dropped {extras_removed} column(s) not in preset from {file_path.name}"
-                )
-            elif extras_preserved:
-                extras_names = ", ".join(name for name, _ in extras_preserved)
-                self.log_signal.emit(
-                    f"➕ Preserved additional column(s) at end for {file_path.name}: {extras_names}"
-                )
-
-            if duplicates_removed:
-                self.log_signal.emit(
-                    f"🧹 Removed {duplicates_removed} duplicate/blank column(s) from {file_path.name}"
-                )
-
-            return 1, 0
+            return True, None
         except Exception as exc:
             self.log_signal.emit(f"❌ Failed to process {file_path.name}: {exc}")
-            return 0, 1
+            return False, str(exc)
 
-    @staticmethod
-    def _choose_best_column(
-        candidates: List[Tuple[int, str, str]], first_chunk: pd.DataFrame
-    ) -> Tuple[str, int, str]:
-        best_candidate = candidates[0]
-        best_score = -1
+    def _compute_candidate_metrics(
+        self, file_path: Path, candidates: List[ColumnCandidateInfo]
+    ) -> None:
+        raise RuntimeError("_compute_candidate_metrics is obsolete and should not be called.")
 
-        for idx, df_col, raw_name in candidates:
-            if df_col in first_chunk.columns:
-                score = first_chunk[df_col].astype(str).str.strip().ne("").sum()
-            else:
-                score = 0
+    def _select_best_candidate(
+        self, candidates: List[ColumnCandidateInfo]
+    ) -> Tuple[ColumnCandidateInfo, int, int]:
+        raise RuntimeError("_select_best_candidate is obsolete and should not be called.")
 
-            if score > best_score:
-                best_candidate = (df_col, idx, raw_name)
-                best_score = score
+    def _validate_output_file(
+        self,
+        output_file: Path,
+        ordered_header: List[str],
+        output_trackers: Dict[str, OutputColumnTracker],
+        total_rows_processed: int,
+    ) -> bool:
+        try:
+            with output_file.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.reader(handle)
+                header = next(reader, [])
+                row_count_out = sum(1 for _ in reader)
+            if header != ordered_header:
+                self.log_signal.emit(
+                    f"❌ Header validation failed for {output_file.name}: expected {ordered_header}, found {header}"
+                )
+                return False
+            if row_count_out != total_rows_processed:
+                self.log_signal.emit(
+                    f"❌ Row count mismatch for {output_file.name}: expected {total_rows_processed}, found {row_count_out}"
+                )
+                return False
 
-        return best_candidate
+            for column_name, tracker in output_trackers.items():
+                if tracker.total_rows != total_rows_processed:
+                    self.log_signal.emit(
+                        f"❌ Row alignment mismatch in column '{column_name}' for {output_file.name}."
+                    )
+                    return False
+
+            return True
+        except Exception as exc:
+            self.log_signal.emit(f"❌ Validation error for {output_file.name}: {exc}")
+            return False
+
+    def _write_report(self) -> None:
+        if not self.results:
+            return
+        try:
+            self.output_path.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_path = self.output_path / f"harmonization_report_{timestamp}.csv"
+            with report_path.open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["file", "status", "reason"])
+                for entry in self.results:
+                    writer.writerow([entry["file"], entry["status"], entry["reason"]])
+            self.log_signal.emit(f"📝 Harmonization report saved to {report_path}")
+        except Exception as exc:
+            self.log_signal.emit(f"⚠️ Unable to write harmonization report: {exc}")
+
+
+@dataclass
+class ScanResult:
+    file_path: Path
+    columns: int
+    rows: int
+
+
+class FileScanWorker(QObject):
+    progress_signal = Signal(int, int)
+    file_scanned = Signal(int, Path, int, int)
+    log_signal = Signal(str)
+    finished_signal = Signal(list, dict)
+
+    def __init__(self, files: List[Path], cache_snapshot: Dict[str, Tuple[float, int, int]]):
+        super().__init__()
+        self.files = files
+        self.cache_snapshot = cache_snapshot or {}
+        self.updated_cache: Dict[str, Tuple[float, int, int]] = {}
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        total = len(self.files)
+        results: List[ScanResult] = []
+
+        for index, file_path in enumerate(self.files, start=1):
+            if self._stop:
+                break
+            columns, rows = self._inspect_file(file_path)
+            results.append(ScanResult(file_path=file_path, columns=columns, rows=rows))
+            self.file_scanned.emit(index, file_path, columns, rows)
+            self.progress_signal.emit(index, total)
+
+        self.finished_signal.emit(results, self.updated_cache)
+
+    def _inspect_file(self, csv_file: Path) -> Tuple[int, int]:
+        cache_key = str(csv_file.resolve())
+        try:
+            stat_info = csv_file.stat()
+            cached = self.cache_snapshot.get(cache_key)
+            if cached and cached[0] == stat_info.st_mtime_ns:
+                self.updated_cache[cache_key] = cached
+                return cached[1], cached[2]
+
+            columns = 0
+            rows = 0
+            with csv_file.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.reader(handle)
+                header = next(reader, [])
+                columns = len(header)
+                for _ in reader:
+                    rows += 1
+
+            self.updated_cache[cache_key] = (stat_info.st_mtime_ns, columns, rows)
+            return columns, rows
+        except Exception as exc:
+            self.log_signal.emit(f"⚠️ Failed to inspect {csv_file.name}: {exc}")
+            self.updated_cache[cache_key] = (0.0, 0, 0)
+            return 0, 0
 
 
 class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
@@ -324,9 +490,16 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self.csv_files: List[Path] = []
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[ColumnOrderWorker] = None
+        self.scan_worker_thread: Optional[QThread] = None
+        self.scan_worker: Optional[FileScanWorker] = None
 
         self._custom_presets: Dict[str, List[str]] = {}
         self.remove_extra_columns = False
+        self.batch_size_limit: int = 0  # 0 = process all files; override in code if needed.
+        self._scan_cache: Dict[str, Tuple[float, int, int]] = {}
+        self.test_mode = False
+        self._user_input_path: Optional[Path] = None
+        self._user_output_path: Optional[Path] = None
 
         self._initializing_ui = True
         self.setup_ui()
@@ -384,6 +557,7 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self._initializing_ui = False
         self._toggle_files_empty_state(False, "No CSV files detected. Click \"Scan Files\" to refresh.")
         self._update_action_state()
+        QTimer.singleShot(0, self._update_action_state)
         self._set_status("Ready.")
 
     def build_path_section(self) -> QFrame:
@@ -394,6 +568,11 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         layout.setSpacing(12)
 
         self.build_path_controls(layout)
+
+        self.test_mode_checkbox = QCheckBox("Test Mode (use golden dataset)")
+        self.test_mode_checkbox.setObjectName("modernCheckbox")
+        self.test_mode_checkbox.stateChanged.connect(self._toggle_test_mode)
+        layout.addWidget(self.test_mode_checkbox)
 
         button_row = QHBoxLayout()
         button_row.addStretch()
@@ -419,11 +598,12 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
 
         self.files_table = QTableWidget()
         self.files_table.setObjectName("tableWidget")
-        self.files_table.setColumnCount(2)
-        self.files_table.setHorizontalHeaderLabels(["Filename", "Columns (unique)"])
+        self.files_table.setColumnCount(3)
+        self.files_table.setHorizontalHeaderLabels(["Filename", "Columns (unique)", "Rows"])
         header_view = self.files_table.horizontalHeader()
         header_view.setSectionResizeMode(0, QHeaderView.Stretch)
         header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.files_table.setAlternatingRowColors(True)
         self.files_table.setMinimumHeight(220)
         self.files_table.hide()
@@ -614,18 +794,29 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
     def _is_worker_active(self) -> bool:
         return bool(self.worker_thread and self.worker_thread.isRunning())
 
+    def _is_scan_active(self) -> bool:
+        return bool(self.scan_worker_thread and self.scan_worker_thread.isRunning())
+
     def _update_action_state(self) -> None:
         has_files = bool(getattr(self, "csv_files", []))
         worker_active = self._is_worker_active()
+        scan_active = self._is_scan_active()
 
         if hasattr(self, "reorder_btn"):
-            self.reorder_btn.setEnabled(has_files and not worker_active)
+            self.reorder_btn.setEnabled(has_files and not worker_active and not scan_active)
         if hasattr(self, "scan_btn"):
-            self.scan_btn.setEnabled(not worker_active)
+            self.scan_btn.setEnabled(not worker_active and not scan_active)
         if hasattr(self, "reset_btn"):
-            self.reset_btn.setEnabled(not worker_active)
+            self.reset_btn.setEnabled(not worker_active and not scan_active)
 
     def reset_tool_state(self) -> None:
+        if self._is_scan_active():
+            QMessageBox.information(
+                self,
+                "Scan In Progress",
+                "Please wait for the file scan to finish before resetting.",
+            )
+            return
         if self._is_worker_active():
             QMessageBox.information(
                 self,
@@ -662,6 +853,9 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         if hasattr(self, "reorder_btn"):
             self.current_theme.apply_to_widget(self.reorder_btn, "button_primary")
 
+        if hasattr(self, "test_mode_checkbox"):
+            self.current_theme.apply_to_widget(self.test_mode_checkbox, "checkbox")
+
         if hasattr(self, "open_output_btn"):
             self.current_theme.apply_to_widget(self.open_output_btn, "button_secondary")
 
@@ -687,10 +881,18 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self._apply_theme_styles()
 
     def scan_files(self) -> None:
+        if self.scan_worker_thread and self.scan_worker_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "Scan In Progress",
+                "File scanning is already running.",
+            )
+            return
+
         self.csv_files.clear()
         self.files_table.setRowCount(0)
         if hasattr(self, "progress_bar"):
-            self.progress_bar.setVisible(False)
+            self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
 
         input_path = Path(self.input_path)
@@ -703,55 +905,42 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
                 f"Input path does not exist:\n{input_path}",
             )
             self._update_action_state()
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
             return
 
         files = sorted(input_path.glob("*.csv"))
-        self.csv_files = files
-
         if not files:
             self._toggle_files_empty_state(False, "No CSV files found in the selected folder.")
             self._set_status("No CSV files found.")
             if self.execution_log:
                 self.log("⚠️ No CSV files detected in the input folder.")
             self._update_action_state()
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
             return
 
         self._toggle_files_empty_state(True)
-
-        self.execution_log_messages = []
-        for row_index, csv_file in enumerate(files):
-            columns = self._peek_columns(csv_file)
-            self.files_table.insertRow(row_index)
-            self.files_table.setItem(
-                row_index,
-                0,
-                QTableWidgetItem(csv_file.name),
-            )
-            self.files_table.setItem(
-                row_index,
-                1,
-                QTableWidgetItem(str(columns)),
-            )
-
-        self._set_status(f"Found {len(files)} CSV file(s).")
-        if self.execution_log:
-            self.log(f"📂 Found {len(files)} CSV file(s) in input folder.")
+        self._set_status(f"Scanning {len(files)} file(s)…")
         self._update_action_state()
 
-    @staticmethod
-    def _peek_columns(csv_file: Path) -> int:
-        try:
-            with csv_file.open("r", encoding="utf-8-sig", newline="") as handle:
-                reader = csv.reader(handle)
-                header = next(reader, [])
-                unique = set()
-                for column in header:
-                    normalized = column.strip()
-                    if normalized:
-                        unique.add(normalized)
-                return len(unique)
-        except Exception:
-            return 0
+        cache_snapshot = dict(self._scan_cache)
+        self.scan_worker_thread = QThread()
+        self.scan_worker = FileScanWorker(files=files, cache_snapshot=cache_snapshot)
+        self.scan_worker.moveToThread(self.scan_worker_thread)
+
+        self.scan_worker_thread.started.connect(self.scan_worker.run)
+        self.scan_worker.progress_signal.connect(self._handle_scan_progress)
+        self.scan_worker.file_scanned.connect(self._handle_scan_result)
+        self.scan_worker.log_signal.connect(self.log_message)
+        self.scan_worker.finished_signal.connect(self._handle_scan_finished)
+        self.scan_worker.finished_signal.connect(self.scan_worker_thread.quit)
+        self.scan_worker.finished_signal.connect(self.scan_worker.deleteLater)
+        self.scan_worker_thread.finished.connect(self._cleanup_scan_worker)
+
+        self.scan_worker_thread.start()
+        if self.execution_log:
+            self.log(f"🔍 Scanning {len(files)} CSV file(s)…")
 
     def on_preset_changed(self, preset_name: str) -> None:
         if preset_name == "Custom (edit below)":
@@ -864,15 +1053,24 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             )
             return
 
+        files_to_process = self._select_files_for_batch()
+        if not files_to_process:
+            QMessageBox.information(
+                self,
+                "No Files Selected",
+                "No files are selected for harmonization.",
+            )
+            return
+
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(len(self.csv_files))
-        self._set_status("Starting column harmonization...")
+        self.progress_bar.setMaximum(len(files_to_process))
+        self._set_status("Starting column harmonization…")
         self._update_action_state()
 
         self.worker_thread = QThread()
         self.worker = ColumnOrderWorker(
-            files=self.csv_files,
+            files=files_to_process,
             column_sequence=sequence,
             remove_extra_columns=self.remove_extra_columns,
             input_path=Path(self.input_path),
@@ -918,7 +1116,53 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
                 self.log("Review log for duplicate or extra column removals per file.")
         self.worker = None
         self.worker_thread = None
+        self.show()
+        self.raise_()
+        self.activateWindow()
         self._update_action_state()
+
+    def _handle_scan_progress(self, current: int, total: int) -> None:
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(current)
+        self._set_status(f"Scanning files ({current}/{total})…")
+
+    def _handle_scan_result(self, index: int, file_path: Path, columns: int, rows: int) -> None:
+        row_position = self.files_table.rowCount()
+        self.files_table.insertRow(row_position)
+        self.files_table.setItem(row_position, 0, QTableWidgetItem(file_path.name))
+        self.files_table.setItem(row_position, 1, QTableWidgetItem(str(columns)))
+        self.files_table.setItem(row_position, 2, QTableWidgetItem(str(rows)))
+
+    def _handle_scan_finished(self, results: List[ScanResult], updated_cache: Dict[str, Tuple[float, int, int]]) -> None:
+        self.csv_files = [result.file_path for result in results]
+        self._scan_cache.update(updated_cache)
+        total_files = len(results)
+        self._set_status(f"Found {total_files} CSV file(s).")
+        if self.execution_log:
+            self.log(f"📂 Scan complete: {total_files} CSV file(s) ready.")
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setValue(0)
+        self._update_action_state()
+
+    def _cleanup_scan_worker(self) -> None:
+        if self.scan_worker_thread:
+            self.scan_worker_thread.deleteLater()
+        self.scan_worker_thread = None
+        self.scan_worker = None
+        self._update_action_state()
+
+    def _select_files_for_batch(self) -> List[Path]:
+        if self.batch_size_limit and self.batch_size_limit > 0:
+            selected = list(self.csv_files[: self.batch_size_limit])
+            if self.execution_log:
+                self.log(
+                    f"📦 Processing first {len(selected)} file(s) out of {len(self.csv_files)} "
+                    f"(batch size limit: {self.batch_size_limit})."
+                )
+            return selected
+        return list(self.csv_files)
 
     def open_input_folder(self) -> None:
         try:
@@ -953,6 +1197,31 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
                 self.log("✂️ Columns not present in the preset will be removed from output files.")
             else:
                 self.log("🔄 Columns not present in the preset will be appended after ordered columns.")
+
+    def _toggle_test_mode(self, state: int) -> None:
+        self.test_mode = state == Qt.Checked
+        if self.test_mode:
+            self._user_input_path = Path(self.input_path)
+            self._user_output_path = Path(self.output_path)
+            test_input = self._get_test_data_path()
+            test_output = self._get_test_output_path()
+            test_output.mkdir(parents=True, exist_ok=True)
+            self._sync_path_edits(test_input, test_output)
+            if self.execution_log:
+                self.log("🧪 Test Mode enabled: using golden dataset.")
+        else:
+            restored_input = self._user_input_path or Path(self.input_path)
+            restored_output = self._user_output_path or Path(self.output_path)
+            self._sync_path_edits(restored_input, restored_output)
+            if self.execution_log:
+                self.log("🧪 Test Mode disabled: using configured paths.")
+        self.scan_files()
+
+    def _get_test_data_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent.parent / "test_data"
+
+    def _get_test_output_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent.parent / "test_output"
 
     def closeEvent(self, event):  # noqa: N802
         if self.worker_thread and self.worker_thread.isRunning():
