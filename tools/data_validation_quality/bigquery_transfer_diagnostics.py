@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from tools.templates import BaseToolDialog, PathConfigMixin
+from styles import get_path_manager
 
 
 SCHEMA_DEFINITION = [
@@ -598,7 +599,22 @@ class BigQueryTransferDiagnostics(PathConfigMixin, BaseToolDialog):
             QMessageBox.warning(self, "Input Folder Missing", f"Input path does not exist:\n{input_path}")
             return
 
-        files = sorted(p for p in input_path.glob("*.csv") if p.is_file())
+        path_info = get_path_manager().prepare_tool_output(
+            "BigQuery Transfer Diagnostics",
+            script_name=Path(__file__).name,
+        )
+        run_root = path_info.get("root")
+        if run_root is not None:
+            self.output_path = run_root
+            self._sync_path_edits(Path(self.input_path), run_root)
+            if self.execution_log:
+                self.log(f"📁 Output run directory: {run_root}")
+
+        files = [
+            file_path
+            for file_path in sorted(input_path.glob("*.csv"))
+            if file_path.is_file()
+        ]
         if not files:
             QMessageBox.information(self, "No CSV Files", "No CSV files found in the selected input folder.")
             return

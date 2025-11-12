@@ -627,15 +627,14 @@ class ScanAndExtractWorker(QObject):
             self.progress_signal.emit(10)
             
             # Create output directory
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_dir = Path(self.output_path) / f"looker_data_{timestamp}"
+            output_dir = Path(self.output_path)
             output_dir.mkdir(parents=True, exist_ok=True)
             
             self.log_signal.emit(f"Output: {output_dir}")
             self.log_signal.emit("")
             
             extraction_stats['output_dir'] = str(output_dir)
-            extraction_stats['timestamp'] = timestamp
+            extraction_stats['timestamp'] = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             # Detect ALL navigation pages
             self.log_signal.emit("🔍 Detecting navigation pages for extraction...")
@@ -1139,7 +1138,7 @@ class LookerStudioExtractorTool(PathConfigMixin, QDialog):
         content_layout.setSpacing(15)
         
         # Path Section
-        self.build_path_controls(
+        path_frame = self.build_path_controls(
             content_layout,
             show_input=False,
             show_output=True,

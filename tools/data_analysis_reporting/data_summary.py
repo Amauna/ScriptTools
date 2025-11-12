@@ -22,6 +22,7 @@ from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QFont
 
 from tools.templates import BaseToolDialog, PathConfigMixin
+from styles import get_path_manager
 
 # Import NEW theme system ✨
 try:
@@ -47,9 +48,10 @@ class DataSummaryWorker(QObject):
     progress_signal = Signal(int, int)  # current, total
     finished_signal = Signal(dict)  # summary_data
     
-    def __init__(self, input_folder: Path):
+    def __init__(self, input_folder: Path, output_dir: Path):
         super().__init__()
         self.input_folder = input_folder
+        self.output_dir = output_dir
         self.should_stop = False
         
         # Store all log messages for file export
@@ -126,7 +128,7 @@ class DataSummaryWorker(QObject):
         
         # Save execution logs
         duration = (datetime.now() - start_time).total_seconds()
-        output_dir = self.input_folder / f"file_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        output_dir = self.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         
         self._save_execution_log(output_dir, len(files_summary), grand_totals['total_rows'], duration)
@@ -932,6 +934,10 @@ class DataSummaryTool(PathConfigMixin, BaseToolDialog):
     def __init__(self, parent=None, input_path: str = None, output_path: str = None):
         super().__init__(parent, input_path, output_path)
 
+        self.path_manager = get_path_manager()
+        base_output = Path(output_path) if output_path else Path(self.path_manager.get_output_path())
+        self.output_path = base_output
+
         self.is_analyzing = False
         self.worker: Optional[DataSummaryWorker] = None
         self.worker_thread: Optional[QThread] = None
@@ -1142,7 +1148,29 @@ class DataSummaryTool(PathConfigMixin, BaseToolDialog):
             return
         
         self.log(f"🔍 Starting analysis...")
-        
+
+        path_info = self.path_manager.prepare_tool_output(
+            "Data Summary Tool",
+            script_name=Path(__file__).name,
+        )
+        run_root = path_info.get("root")
+        if run_root is None:
+            QMessageBox.critical(
+                self,
+                "Output Error",
+                "Unable to create an output folder for this analysis run.",
+            )
+            self.is_analyzing = False
+            self.analyze_btn.setEnabled(True)
+            self.analyze_btn.setText("🔍 Analyze Files")
+            self.progress_bar.setVisible(False)
+            return
+
+        run_root.mkdir(parents=True, exist_ok=True)
+        self.output_path = run_root
+        self._sync_path_edits(Path(self.input_path), self.output_path)
+        self.log(f"📁 Output run directory: {self.output_path}")
+
         # Disable UI
         self.is_analyzing = True
         self.analyze_btn.setEnabled(False)
@@ -1156,7 +1184,7 @@ class DataSummaryTool(PathConfigMixin, BaseToolDialog):
         
         # Create worker thread
         try:
-            self.worker = DataSummaryWorker(self.input_path)
+            self.worker = DataSummaryWorker(Path(self.input_path), self.output_path)
             self.worker_thread = QThread()
             self.worker.moveToThread(self.worker_thread)
             
@@ -1474,8 +1502,6 @@ def main():
     """Main entry point"""
     app = QApplication(sys.argv)
     
-    from styles import get_path_manager
-
     path_manager = get_path_manager()
     input_path = str(path_manager.get_input_path())
     output_path = str(path_manager.get_output_path())

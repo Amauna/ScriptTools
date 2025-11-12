@@ -15,7 +15,7 @@ USAGE:
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 from PySide6.QtWidgets import QDialog
 from PySide6.QtCore import Qt
@@ -67,6 +67,7 @@ class BaseToolDialog(QDialog):
                 # - self.output_path (Path)
                 # - apply_theme() method
                 # - refresh_theme() method
+                # - allocate_run_directory() helper for PathManager switch-case
                 
                 # Add your UI setup
                 self.setup_tool_ui()
@@ -143,6 +144,37 @@ class BaseToolDialog(QDialog):
         
         # Apply theme immediately
         self.apply_theme()
+
+    def allocate_run_directory(
+        self,
+        tool_name: str,
+        *,
+        script_name: Optional[str] = None,
+        sync_paths: bool = True,
+        announce: bool = True,
+    ) -> Dict[str, Path]:
+        """Request a run directory from the PathManager and optionally sync paths/log it."""
+
+        info = self.path_manager.prepare_tool_output(
+            tool_name,
+            script_name=script_name,
+        )
+        run_root = info.get("root")
+        if run_root is None:
+            raise RuntimeError(f"PathManager did not return a run directory for {tool_name}.")
+
+        if sync_paths:
+            run_root = Path(run_root)
+            self.output_path = run_root
+            self._sync_path_edits(Path(self.input_path), run_root)
+
+        if announce and hasattr(self, "log"):
+            try:
+                self.log(f"📁 Output run directory: {run_root}")
+            except Exception:
+                pass
+
+        return info
 
     def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
         """Keep local state aligned with the shared path manager."""

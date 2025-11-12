@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, List, Optional
+from typing import Dict
 
 PathListener = Callable[[Path, Path], None]
 
@@ -175,6 +176,61 @@ class PathManager:
         sanitized = _sanitize_tool_name(tool_name)
         tool_root = _ensure_tool_output_root(self._output_path, sanitized)
         return _create_timestamped_subdir(tool_root)
+
+    def prepare_tool_output(
+        self,
+        tool_name: str,
+        *,
+        script_name: Optional[str] = None,
+    ) -> Dict[str, Path]:
+        """Create a structured, per-tool output directory using switch-case logic."""
+
+        tool_id = _sanitize_tool_name(tool_name)
+        script_id = _sanitize_tool_name(script_name or tool_name)
+
+        match tool_id.lower():
+            case "looker_extractor":
+                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                script_root = _ensure_directory(tool_root / script_id)
+                run_root = _create_timestamped_subdir(script_root)
+                result: Dict[str, Path] = {
+                    "tool_root": tool_root,
+                    "script_root": script_root,
+                    "root": run_root,
+                }
+            case "metric_fixer":
+                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                script_root = _ensure_directory(tool_root / script_id)
+                run_root = _create_timestamped_subdir(script_root)
+                result = {
+                    "tool_root": tool_root,
+                    "script_root": script_root,
+                    "root": run_root,
+                }
+            case "column_order_harmonizer":
+                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                script_root = _ensure_directory(tool_root / script_id)
+                run_root = _create_timestamped_subdir(script_root)
+                success_dir = _ensure_directory(run_root / "Success")
+                failed_dir = _ensure_directory(run_root / "Failed")
+                result = {
+                    "tool_root": tool_root,
+                    "script_root": script_root,
+                    "root": run_root,
+                    "success": success_dir,
+                    "failed": failed_dir,
+                }
+            case _:
+                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                script_root = _ensure_directory(tool_root / script_id)
+                run_root = _create_timestamped_subdir(script_root)
+                result = {
+                    "tool_root": tool_root,
+                    "script_root": script_root,
+                    "root": run_root,
+                }
+
+        return result
 
     def _notify_listeners(self) -> None:
         """Invoke all listeners with the latest paths."""

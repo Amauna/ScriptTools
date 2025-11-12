@@ -14,6 +14,7 @@
 6. [Browser Automation](#browser-automation)
 7. [Code Patterns & Conventions](#code-patterns--conventions)
 8. [Development Workflow](#development-workflow)
+9. [Output Directory Contract](#output-directory-contract)
 
 ---
 
@@ -457,6 +458,28 @@ self.log("⚠️ Warning: Slow network detected", "WARNING")
 # Progress indicators
 self.log("📊 Processing file 1/10...")
 ```
+
+---
+
+## 🗂️ Output Directory Contract
+
+All output-producing tools **must** obtain their run directory from the central `PathManager` switch-case. The helper `BaseToolDialog.allocate_run_directory()` wraps the contract:
+
+```python
+info = self.allocate_run_directory(
+    "Metric Fixer",
+    script_name=Path(__file__).name,
+)
+run_root = info["root"]              # Timestamped folder for this run
+success_dir = info.get("success")    # Tool-specific subfolders (if any)
+```
+
+- Never hand-roll timestamped folders.
+- Logging the run directory is mandatory (the helper does this by default).
+- Always sync the UI path fields (`sync_paths=True` by default) so "Open" buttons target the new run.
+- `PathManager` resolves collisions and enforces consistent naming: `<ToolName>/<script_name>/<timestamp>/…`.
+
+When introducing a new tool, add a `match` branch in `styles/utils/path_manager.py` **only** if special subfolders are required; otherwise the default case already handles timestamping.
 
 ---
 

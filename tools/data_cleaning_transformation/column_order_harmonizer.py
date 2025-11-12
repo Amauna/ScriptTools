@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
 import pandas as pd
 
 from tools.templates import BaseToolDialog, PathConfigMixin
+from styles import get_path_manager
 
 
 _DEFAULT_SEQUENCE = [
@@ -101,6 +103,9 @@ class ColumnOrderWorker(QObject):
         remove_extra_columns: bool,
         input_path: Path,
         output_path: Path,
+        output_success_path: Path,
+        output_failed_path: Path,
+        report_root_path: Path,
         chunksize: int = 100_000,
         max_workers: int = 8,
     ) -> None:
@@ -110,6 +115,9 @@ class ColumnOrderWorker(QObject):
         self.remove_extra_columns = remove_extra_columns
         self.input_path = input_path
         self.output_path = output_path
+        self.output_success_path = output_success_path
+        self.output_failed_path = output_failed_path
+        self.report_root_path = report_root_path
         self.chunksize = chunksize
         self.max_workers = max_workers
         self._stop = False
@@ -159,6 +167,16 @@ class ColumnOrderWorker(QObject):
     def stop(self) -> None:
         self._stop = True
 
+    def _copy_to_failed(self, file_path: Path) -> None:
+        if self.output_failed_path is None:
+            return
+        try:
+            self.output_failed_path.mkdir(parents=True, exist_ok=True)
+            target = self.output_failed_path / file_path.name
+            shutil.copy2(file_path, target)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_signal.emit(f"⚠️ Unable to copy {file_path.name} to failed folder: {exc}")
+
     def _normalize_cols(self, cols: List[str]) -> List[str]:
         return [c.strip() for c in cols]
 
@@ -169,6 +187,7 @@ class ColumnOrderWorker(QObject):
                 if not raw_header:
                     reason = "Empty file"
                     self.log_signal.emit(f"❌ {reason}: {file_path.name}")
+                    self._copy_to_failed(file_path)
                     return False, reason
 
             trimmed_header = [name.strip() for name in raw_header]
@@ -203,11 +222,13 @@ class ColumnOrderWorker(QObject):
             if ambiguous_columns:
                 reason = f"Ambiguous columns detected: {', '.join(ambiguous_columns)}"
                 self.log_signal.emit(f"❌ {reason} in {file_path.name}")
+                self._copy_to_failed(file_path)
                 return False, reason
 
             if missing_columns:
                 reason = f"Missing required columns: {', '.join(missing_columns)}"
                 self.log_signal.emit(f"❌ {reason} in {file_path.name}")
+                self._copy_to_failed(file_path)
                 return False, reason
 
             extras_preserved: List[ColumnCandidateInfo] = []
@@ -242,8 +263,10 @@ class ColumnOrderWorker(QObject):
                 keep_default_na=False,
             )
 
-            self.output_path.mkdir(parents=True, exist_ok=True)
-            output_file = self.output_path / file_path.name
+            self.output_success_path.mkdir(parents=True, exist_ok=True)
+            output_file = self.output_success_path / file_path.name
+            if output_file.exists():
+                output_file.unlink()
 
             header_written = False
             wrote_any = False
@@ -329,6 +352,7 @@ class ColumnOrderWorker(QObject):
                         output_file.unlink()
                     except Exception:
                         pass
+                self._copy_to_failed(file_path)
                 return False, "Validation failed"
 
             if extras_preserved and not self.remove_extra_columns:
@@ -340,6 +364,7 @@ class ColumnOrderWorker(QObject):
             return True, None
         except Exception as exc:
             self.log_signal.emit(f"❌ Failed to process {file_path.name}: {exc}")
+            self._copy_to_failed(file_path)
             return False, str(exc)
 
     def _compute_candidate_metrics(
@@ -390,10 +415,11 @@ class ColumnOrderWorker(QObject):
     def _write_report(self) -> None:
         if not self.results:
             return
+        if self.report_root_path is None:
+            return
         try:
-            self.output_path.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_path = self.output_path / f"harmonization_report_{timestamp}.csv"
+            self.report_root_path.mkdir(parents=True, exist_ok=True)
+            report_path = self.report_root_path / "_harmonization_report.csv"
             with report_path.open("w", encoding="utf-8-sig", newline="") as handle:
                 writer = csv.writer(handle)
                 writer.writerow(["file", "status", "reason"])
@@ -500,6 +526,9 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self.test_mode = False
         self._user_input_path: Optional[Path] = None
         self._user_output_path: Optional[Path] = None
+        self.output_run_root: Optional[Path] = None
+        self.output_run_success: Optional[Path] = None
+        self.output_run_failed: Optional[Path] = None
 
         self._initializing_ui = True
         self.setup_ui()
@@ -1053,6 +1082,17 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             )
             return
 
+        path_info = get_path_manager().prepare_tool_output(
+            "Column Order Harmonizer",
+            script_name=Path(__file__).name,
+        )
+        self.output_run_root = path_info.get("root")
+        self.output_run_success = path_info.get("success")
+        self.output_run_failed = path_info.get("failed")
+        if self.output_run_root is not None:
+            self.output_path = self.output_run_root
+            self._sync_path_edits(self.input_path, self.output_path)
+
         files_to_process = self._select_files_for_batch()
         if not files_to_process:
             QMessageBox.information(
@@ -1075,6 +1115,9 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             remove_extra_columns=self.remove_extra_columns,
             input_path=Path(self.input_path),
             output_path=Path(self.output_path),
+            output_success_path=self.output_run_success,
+            output_failed_path=self.output_run_failed,
+            report_root_path=self.output_run_root,
         )
         self.worker.moveToThread(self.worker_thread)
 
@@ -1114,6 +1157,13 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             self.log(f"🏁 {summary}")
             if success:
                 self.log("Review log for duplicate or extra column removals per file.")
+            if getattr(self, "output_run_root", None):
+                self.log(f"🗂 Output root: {self.output_run_root}")
+                if getattr(self, "output_run_success", None):
+                    self.log(f"   ├─ Success: {self.output_run_success}")
+                if getattr(self, "output_run_failed", None):
+                    self.log(f"   └─ Failed: {self.output_run_failed}")
+
         self.worker = None
         self.worker_thread = None
         self.show()

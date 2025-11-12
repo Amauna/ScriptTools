@@ -37,6 +37,7 @@ GA4 Script Tools/
 │   ├── themes/                      # 10 JSON theme files
 │   ├── components/                  # Reusable UI components
 │   └── animations/                  # Qt animations
+├── styles/utils/path_manager.py     # Centralised input/output routing (switch-case controlled)
 ├── tools/                           # All tools organized by category
 │   ├── data_collection_import/
 │   │   └── looker_extractor.py        ✅ Implemented
@@ -46,9 +47,31 @@ GA4 Script Tools/
 │   └── ... (more categories)
 ├── gui_logs/                        # Session execution logs
 └── execution_test/
-    └── Output/
-    └── Output/                      # Tool outputs
+    └── Output/                      # Tool outputs (per-tool/script/timestamp folders)
 ```
+
+### Output Directory Layout (auto-managed)
+
+```
+execution_test/Output/
+├── Looker_Extractor/
+│   └── looker_extractor_py/
+│       └── 2025-11-12_0814/
+│           ├── exported_table_1.csv
+│           └── logs/
+├── Column_Order_Harmonizer/
+│   └── column_order_harmonizer_py/
+│       └── 2025-11-12_0817/
+│           ├── Success/
+│           ├── Failed/
+│           └── _harmonization_report.csv
+├── Metric_Fixer/
+│   └── metric_fixer_py/
+│       └── 2025-11-12_0820/
+└── ...
+```
+
+All timestamps and subfolders are produced by `PathManager.prepare_tool_output(...)`; individual tools never manually compose paths. When inheriting `BaseToolDialog`, prefer the helper `self.allocate_run_directory(...)` to keep UI paths in sync automatically.
 
 ## 🎨 Available Tools
 
@@ -158,11 +181,32 @@ All executions are logged to `gui_logs/` via the unified `LogManager`:
 
 ## 🛠️ Development
 
-### Adding New Tools
+### Output Path Governance
 
-Start from the template so you inherit theme + logging automatically:
+Every tool that writes files **must** obtain its run directory through the central `PathManager` switch-case. This guarantees consistent namespaces, script-tagging, and harmonised subfolders (e.g. `Success/Failed` for the harmonizer).
 
 ```python
+from pathlib import Path
+from styles import get_path_manager
+
+info = get_path_manager().prepare_tool_output(
+    "My Tool Name",
+    script_name=Path(__file__).name,
+)
+run_root = info["root"]
+# Optional specialised folders: info.get("success"), info.get("failed"), ...
+```
+
+- **Never** hand-build timestamped folders inside tool code.
+- Always log the chosen `run_root` so downstream automations can find outputs (the helper does this by default).
+- Call `_sync_path_edits(self.input_path, run_root)` (or rely on `allocate_run_directory(..., sync_paths=True)` which handles it) to keep UI fields up to date.
+
+### Adding New Tools
+
+Start from the template so you inherit theme + logging + path governance automatically:
+
+```python
+from pathlib import Path
 from PySide6.QtWidgets import QVBoxLayout, QLabel
 
 from tools.templates import BaseToolDialog, PathConfigMixin
@@ -181,10 +225,13 @@ class MyTool(PathConfigMixin, BaseToolDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Your UI goes here!"))
 
-        # Use the shared execution log
-        self.execution_log = self.create_execution_log(layout)
-        if self.execution_log:
-            self.log("Tool initialized! 🌊")
+        # Obtain a dedicated run directory for this execution
+        info = self.allocate_run_directory(
+            "My Tool Name",
+            script_name=Path(__file__).name,
+        )
+        run_root = info["root"]
+        # Optional specialised folders: info.get("success"), info.get("failed"), ...
 ```
 
 Then add the tool to the registry in `main.py`.
