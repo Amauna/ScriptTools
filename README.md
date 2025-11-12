@@ -116,6 +116,36 @@ All timestamps and subfolders are produced by `PathManager.prepare_tool_output(.
   - ✅ Lets analysts review findings per file, choose exactly which columns to repair, and preview replacements before committing.
   - 🔧 Generates cleaned CSVs via background workers, with live progress bars, granular logging, and success/failure counts.
   - 🛡️ Preserves originals by writing fixed files to dedicated output folders and documenting every change in the execution log.
+- **`metric_fixer_batch.py` — Metric Field Fixer (Batch CLI)**
+  - ⚡ Schema-driven CLI that enforces GA4 metric types across entire folders without opening the GUI.
+  - 🧠 Canonicalises header aliases (e.g. “Event name”, `event_name`) and normalises integers, engagement percentages, and two-decimal revenue values.
+  - 🧾 Emits clean CSV (and optional Parquet) plus a JSONL manifest with per-file coercion stats for auditing or GUI inspection.
+  - 🔁 Supports `--resume`, worker throttling, dry runs, and schema overrides via `schemas/metric_schema_v1.yaml`.
+
+#### Metric Fixer Batch CLI — Quick Start
+
+Run from an activated virtual environment (Python 3.12+):
+
+```powershell
+# Smoke test (reads files, no writes)
+python tools\data_cleaning_transformation\metric_fixer_batch.py `
+    --input  "C:\path\to\raw_csv" `
+    --output "C:\path\to\clean_outputs" `
+    --schema "schemas\metric_schema_v1.yaml" `
+    --dry-run --limit 5 --workers 1 --no-parquet
+
+# Full batch run
+python tools\data_cleaning_transformation\metric_fixer_batch.py `
+    --input  "C:\path\to\raw_csv" `
+    --output "C:\path\to\clean_outputs" `
+    --schema "schemas\metric_schema_v1.yaml" `
+    --workers 2
+```
+
+- Clean CSVs land in `<output>/clean_csv/`. Enable Parquet by omitting `--no-parquet`.
+- Every run writes a log to `<output>/logs/metric_fixer_batch.log` and a manifest `metric_fixer_manifest_<timestamp>.jsonl`.
+- Use `--resume` to skip files already processed successfully, `--only` to target specific filenames, and tune `--workers` to match machine resources.
+- PyYAML is required when loading the schema (`pip install PyYAML` if it is missing).
 
 ### 📊 Data Analysis & Reporting
 - **`data_summary.py` — Data Summary Tool**

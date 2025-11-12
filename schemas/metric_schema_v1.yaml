@@ -1,0 +1,50 @@
+version: 1
+description: >
+  Canonical GA4 metric schema for batch metric fixer.
+  Enforces integer counts and two-decimal precision on revenue and rates.
+
+columns:
+  - name: sessions
+    dtype: int
+    default: "0"
+
+  - name: event_count
+    dtype: int
+    default: "0"
+
+  - name: engaged_sessions
+    dtype: int
+    default: "0"
+
+  - name: engagement_rate
+    dtype: decimal
+    scale: 2
+    default: "0.00"
+    percent_mode: true
+    clamp: true
+    min: "0.00"
+    max: "100.00"
+
+  - name: views
+    dtype: int
+    default: "0"
+
+  - name: active_users
+    dtype: int
+    default: "0"
+
+  - name: new_users
+    dtype: int
+    default: "0"
+
+  - name: total_users
+    dtype: int
+    default: "0"
+
+  - name: total_revenue
+    dtype: decimal
+    scale: 2
+    default: "0.00"
+    clamp: true
+    min: "0.00"
+

@@ -53,6 +53,11 @@ python -m pip show PySide6
 ```
 You want version metadata. If it shrugs “Package not found,” you missed a step above. Rewind.
 
+🎯 **Batch Tool Extra:** the metric fixer CLI reads `schemas/metric_schema_v1.yaml`. If `PyYAML` isn’t already installed, add it now:
+```powershell
+pip install PyYAML
+```
+
 ---
 
 ## V. First Awakening (Console Run)
@@ -100,3 +105,18 @@ You are now armed with velvet lightning. Launch the suite, shatter complacency, 
 6. `Launch_GA4_Tools.vbs` → silent, polished launch once the loud run succeeds.
 
 Bookmark it, tattoo it, tape it to your monitor. Obey the sequence and the suite will always rise for you. 💙⚡
+
+---
+
+## X. Metric Fixer Batch CLI (Bonus Storm)
+- Activate the venv, navigate to the project root, then run:
+  ```powershell
+  python tools\data_cleaning_transformation\metric_fixer_batch.py `
+      --input  "C:\path\to\raw_csv" `
+      --output "C:\path\to\clean_outputs" `
+      --schema "schemas\metric_schema_v1.yaml" `
+      --workers 2
+  ```
+- Add `--dry-run --limit 5 --workers 1` for a gentle smoke test.
+- Outputs live in `<output>/clean_csv/`, with logs + manifest alongside—read the JSONL manifest to see per-file coercion counts.
+- Use `--resume` to skip files already blessed, `--no-parquet` to skip Parquet, and tune `--workers` so your machine doesn’t melt.

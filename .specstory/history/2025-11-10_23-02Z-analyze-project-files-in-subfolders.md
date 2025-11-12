@@ -17207,3 +17207,51 @@ PySide warnings still show (no site-packages in this sandbox) and no automated t
 
 ---
 
+_**User**_
+
+lets go back to @column_order_harmonizer.py can this be also rename the columns?
+
+Website Name
+
+Event name
+
+Date
+
+FullURL
+
+Country
+
+Device category
+
+Session default channel grouping
+
+Session medium
+
+Session source
+
+Session campaign
+
+Sessions
+
+Event count
+
+Engaged sessions
+
+Engagement rate
+
+Views
+
+Active users
+
+New users	
+
+Total users
+
+Total revenue
+
+
+
+because some of the csv files may have name the column in this for example "total_revenue" and "total_users" that has _ in their name and all lower case
+
+---
+
