@@ -120,3 +120,15 @@ Bookmark it, tattoo it, tape it to your monitor. Obey the sequence and the suite
 - Add `--dry-run --limit 5 --workers 1` for a gentle smoke test.
 - Outputs live in `<output>/clean_csv/`, with logs + manifest alongside—read the JSONL manifest to see per-file coercion counts.
 - Use `--resume` to skip files already blessed, `--no-parquet` to skip Parquet, and tune `--workers` so your machine doesn’t melt.
+
+---
+
+## XI. Date Format Converter GUI (High-Volume Rituals)
+- Launch from the suite (`Date & Time Utilities → Date Format Converter`) after scanning your CSV folder.
+- The scan pass is now header-first: it caches previews, counts rows, and auto-detects date columns (aliases like `Date`, `session_date`, `Event Date` all qualify). If you’re dealing with a renegade column name, tick **Manual override** and choose it explicitly.
+- Before converting:
+  - Adjust **chunk size** (default `50 000`) if you need to squeeze RAM—smaller chunks reduce memory but increase runtime.
+  - Set **workers** to match available CPU cores; 2–4 is the sweet spot unless you enjoy throttling your laptop fan.
+  - The dialog will warn you when total bytes exceed ~1.5 GB. That’s your cue to consider a dry-run or drop `workers` down a notch.
+- During conversion you’ll see live progress with success/skip/failure counts plus per-file status in the execution log. Skipped entries (resume mode) still advance the bar so you know nothing stalled.
+- The summary card links to the manifest and shows parsed / inferred / fallback counts. Use the manifest to triage stubborn files without re-running the entire batch.

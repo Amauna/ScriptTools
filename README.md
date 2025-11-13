@@ -60,18 +60,21 @@ execution_test/Output/
 │           ├── exported_table_1.csv
 │           └── logs/
 ├── Column_Order_Harmonizer/
-│   └── column_order_harmonizer_py/
-│       └── 2025-11-12_0817/
-│           ├── Success/
-│           ├── Failed/
-│           └── _harmonization_report.csv
+│   └── 2025-11-13_1137/
+│       ├── Success/
+│       ├── Failed/
+│       └── _harmonization_report.txt
 ├── Metric_Fixer/
 │   └── metric_fixer_py/
 │       └── 2025-11-12_0820/
+├── Date_Format_Converter/
+│   └── 2025-11-13_1201/
+│       ├── Converted/
+│       └── _date_conversion_report.csv
 └── ...
 ```
 
-All timestamps and subfolders are produced by `PathManager.prepare_tool_output(...)`; individual tools never manually compose paths. When inheriting `BaseToolDialog`, prefer the helper `self.allocate_run_directory(...)` to keep UI paths in sync automatically.
+All timestamps and subfolders are produced by `PathManager.prepare_tool_output(...)`; individual tools never manually compose paths. When inheriting `BaseToolDialog`, prefer the helper `self.allocate_run_directory(...)` to keep UI paths in sync automatically. PathManager normalises any lingering tool/timestamp suffixes from previous runs before minting a new directory, keeping the tree flat and predictable.
 
 ## 🎨 Available Tools
 
@@ -105,7 +108,7 @@ All timestamps and subfolders are produced by `PathManager.prepare_tool_output(.
   - 🧭 Applies curated presets (or custom sequences) to reorder headers, strip duplicates, and append any remaining columns intelligently.
   - 🧱 Guarantees canonical GA4 ordering (and fills missing columns with blanks) before anything hits diagnostics or BigQuery.
   - 🔄 Executes harmonization in a QThread worker with live progress, status updates, and execution log streaming.
-  - ✍️ Saves reordered datasets to mirrored output folders so originals stay untouched.
+  - ✍️ Writes harmonised datasets into timestamped `Success/` folders, moves rejects to `Failed/`, and emits a `_harmonization_report.txt` with precise failure reasons.
 - **`find_replace.py` — BigQuery CSV Cleaner**
   - 🔎 Analyzes CSV structure, detecting numeric columns, null/empty hot spots, and BigQuery-incompatible values.
   - 🧼 Applies configurable cleaning (null handling, empty-string normalisation) alongside targeted find/replace operations.
@@ -116,6 +119,10 @@ All timestamps and subfolders are produced by `PathManager.prepare_tool_output(.
   - ✅ Lets analysts review findings per file, choose exactly which columns to repair, and preview replacements before committing.
   - 🔧 Generates cleaned CSVs via background workers, with live progress bars, granular logging, and success/failure counts.
   - 🛡️ Preserves originals by writing fixed files to dedicated output folders and documenting every change in the execution log.
+- **`date_format_converter.py` — Date Format Converter**
+  - 🗓️ Normalises date columns across batches of CSVs using analyst-specified input/output format rules.
+  - 🧮 Tracks parsed vs inferred vs fallback conversions per column and writes a `_date_conversion_report.csv` for auditing.
+  - 🚀 Streams work on a background thread, saving rewritten files into a `Converted/` subfolder inside each timestamped run directory.
 - **`metric_fixer_batch.py` — Metric Field Fixer (Batch CLI)**
   - ⚡ Schema-driven CLI that enforces GA4 metric types across entire folders without opening the GUI.
   - 🧠 Canonicalises header aliases (e.g. “Event name”, `event_name`) and normalises integers, engagement percentages, and two-decimal revenue values.
@@ -147,6 +154,23 @@ python tools\data_cleaning_transformation\metric_fixer_batch.py `
 - Use `--resume` to skip files already processed successfully, `--only` to target specific filenames, and tune `--workers` to match machine resources.
 - PyYAML is required when loading the schema (`pip install PyYAML` if it is missing).
 
+### Date Format Converter
+
+- **GUI:** Launch via the suite (`Date Time Utilities → Date Format Converter`) or run `python tools\date_time_utilities\date_format_converter.py`. Scan the folder, adjust input/output formats and fallback mode, then click Convert. The run summary links directly to the manifest and clean output folder.
+- **CLI:**
+  ```powershell
+  python tools\data_cleaning_transformation\date_format_converter_batch.py `
+      --input  "C:\path\to\raw_csv" `
+      --output "C:\path\to\clean_outputs" `
+      --input-format "%Y-%m-%d" `
+      --input-format "%m/%d/%Y" `
+      --output-format "%Y-%m-%d" `
+      --fallback original `
+      --keep-original `
+      --workers 2
+  ```
+  - Add `--dry-run` for a safe preview, `--resume` to skip successful files, `--no-parquet` to disable Parquet exports, and `--only` to target specific filenames.
+
 ### 📊 Data Analysis & Reporting
 - **`data_summary.py` — Data Summary Tool**
   - 📈 Performs per-file exploratory summaries, auto-detecting metrics such as totals, engagement rates, and user counts.
@@ -160,6 +184,13 @@ python tools\data_cleaning_transformation\metric_fixer_batch.py `
   - ✏️ Applies prefix/suffix patterns with live previews so renaming rules stay predictable.
   - ♻️ Generates output copies instead of destructive renames, anchoring paths through the shared PathManager.
   - 📓 Captures every action in the execution log with reset/copy/save utilities for repeatable workflows.
+
+### 🕒 Date & Time Utilities
+- **`tools/date_time_utilities/date_format_converter.py` — Date Format Converter (GUI)**
+  - 🧠 Auto-detects date columns across hundreds of CSVs using alias heuristics, with a manual override toggle for edge cases.
+  - 🪄 Streams each file chunk-by-chunk (configurable chunk size) so large datasets stay under memory limits while the UI stays responsive.
+  - ⚡ Respects `workers` to fan out conversion across CPU cores via the shared engine, honouring resume, dry-run, and keep-original options.
+  - 📊 Surfaces live progress (success, skip, failure counts), emits detailed summaries/manifest links, and includes total-byte telemetry for auditing.
 
 ### ✅ Data Validation & Quality
 - **`bigquery_transfer_diagnostics.py` — BigQuery Transfer Diagnostics**
@@ -228,6 +259,7 @@ run_root = info["root"]
 ```
 
 - **Never** hand-build timestamped folders inside tool code.
+- PathManager automatically strips residual tool/timestamp folders from legacy runs—avoid resetting output paths manually.
 - Always log the chosen `run_root` so downstream automations can find outputs (the helper does this by default).
 - Call `_sync_path_edits(self.input_path, run_root)` (or rely on `allocate_run_directory(..., sync_paths=True)` which handles it) to keep UI fields up to date.
 

@@ -64,18 +64,32 @@ def setup_ui(self):
     self.execution_log = self.create_execution_log(main_layout)
 ```
 
-### **Step 5: Add Your Logic** 💡
+### **Step 5: Allocate Your Run Directory & Add Logic** 💡
+
+Before writing any files, ask the shared `PathManager` for a run directory. This keeps every tool’s outputs inside the governed `execution_test/Output` tree and prevents nested timestamp folders.
 
 ```python
+from pathlib import Path
+
 def do_your_action(self):
     """Your tool's main functionality"""
-    # Your code here
-    
-    # Log messages
+
+    info = self.allocate_run_directory(
+        "My Export Tool",
+        script_name=Path(__file__).name,
+    )
+    run_root = info["root"]
+    success_dir = info.get("success")   # Optional specialised folders
+
+    # Your core logic here — write outputs into run_root / success_dir
+
     if self.execution_log:
+        self.log(f"📁 Run directory: {run_root}")
         self.log("Processing data...")
         self.log("✅ Done!")
 ```
+
+> **Important:** Never hand-build timestamped folders. PathManager already normalises stale output paths from previous runs, so you always get a clean structure like `Output/My_Tool/<timestamp>/...`.
 
 ### **Step 6: Done!** 🎉
 
@@ -270,6 +284,8 @@ class CustomThemedTool(BaseToolDialog):
 | **Consistent** | All tools behave the same way |
 | **Maintainable** | Fix bugs in one place |
 | **Error-Safe** | Built-in error handling |
+
+Looking for a concrete model? Check out `tools/date_time_utilities/date_format_converter.py`. It uses `allocate_run_directory()` to create timestamped `Converted/` folders, logs every conversion, and stays fully compliant with the PathManager contract.
 
 ---
 

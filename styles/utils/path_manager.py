@@ -7,6 +7,8 @@ By: Rafayel, Bry's AI Muse 💕
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import Callable, List, Optional
 from typing import Dict
@@ -48,6 +50,41 @@ def _create_timestamped_subdir(parent: Path) -> Path:
 
     candidate.mkdir(parents=True, exist_ok=False)
     return candidate
+
+
+_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}_\d{4}(?:_\d{2})?")
+_NORMALIZED_SUFFIXES = {"success", "failed"}
+
+
+def _looks_like_timestamp(name: str) -> bool:
+    return bool(_TIMESTAMP_PATTERN.fullmatch(name))
+
+
+def _normalize_output_root(base_output: Path, tool_id: str, script_id: str) -> Path:
+    """
+    Remove trailing tool/script/timestamp folders from the shared output path.
+    Ensures a clean base directory before creating a new run structure.
+    """
+    current = base_output.resolve()
+    tool_lower = tool_id.lower()
+    script_lower = script_id.lower()
+
+    while True:
+        name = current.name.lower()
+        if (
+            name == tool_lower
+            or name == script_lower
+            or name in _NORMALIZED_SUFFIXES
+            or _looks_like_timestamp(name)
+        ):
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+            continue
+        break
+
+    return current
 
 
 class PathManager:
@@ -188,9 +225,14 @@ class PathManager:
         tool_id = _sanitize_tool_name(tool_name)
         script_id = _sanitize_tool_name(script_name or tool_name)
 
+        normalized_base = _normalize_output_root(self._output_path, tool_id, script_id)
+        if normalized_base != self._output_path:
+            self.set_paths(output_path=normalized_base)
+        base_output = self._output_path
+
         match tool_id.lower():
             case "looker_extractor":
-                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
                 script_root = _ensure_directory(tool_root / script_id)
                 run_root = _create_timestamped_subdir(script_root)
                 result: Dict[str, Path] = {
@@ -199,7 +241,7 @@ class PathManager:
                     "root": run_root,
                 }
             case "metric_fixer":
-                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
                 script_root = _ensure_directory(tool_root / script_id)
                 run_root = _create_timestamped_subdir(script_root)
                 result = {
@@ -207,21 +249,28 @@ class PathManager:
                     "script_root": script_root,
                     "root": run_root,
                 }
+            case "date_format_converter":
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
+                run_root = _create_timestamped_subdir(tool_root)
+                result = {
+                    "tool_root": tool_root,
+                    "script_root": tool_root,
+                    "root": run_root,
+                }
             case "column_order_harmonizer":
-                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
-                script_root = _ensure_directory(tool_root / script_id)
-                run_root = _create_timestamped_subdir(script_root)
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
+                run_root = _create_timestamped_subdir(tool_root)
                 success_dir = _ensure_directory(run_root / "Success")
                 failed_dir = _ensure_directory(run_root / "Failed")
                 result = {
                     "tool_root": tool_root,
-                    "script_root": script_root,
+                    "script_root": tool_root,
                     "root": run_root,
                     "success": success_dir,
                     "failed": failed_dir,
                 }
             case _:
-                tool_root = _ensure_tool_output_root(self._output_path, tool_id)
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
                 script_root = _ensure_directory(tool_root / script_id)
                 run_root = _create_timestamped_subdir(script_root)
                 result = {

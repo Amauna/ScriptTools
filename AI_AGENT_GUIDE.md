@@ -477,7 +477,7 @@ success_dir = info.get("success")    # Tool-specific subfolders (if any)
 - Never hand-roll timestamped folders.
 - Logging the run directory is mandatory (the helper does this by default).
 - Always sync the UI path fields (`sync_paths=True` by default) so "Open" buttons target the new run.
-- `PathManager` resolves collisions and enforces consistent naming: `<ToolName>/<script_name>/<timestamp>/…`.
+- `PathManager` resolves collisions and enforces consistent naming. Default structure is `<ToolName>/<script_name>/<timestamp>/…`, while specialised branches (e.g. Column Order Harmonizer, Date Format Converter) flatten to `<ToolName>/<timestamp>/…` and auto-create their required subfolders (e.g. `Success/`, `Failed/`, `Converted/`).
 
 When introducing a new tool, add a `match` branch in `styles/utils/path_manager.py` **only** if special subfolders are required; otherwise the default case already handles timestamping.
 

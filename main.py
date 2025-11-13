@@ -487,6 +487,12 @@ class GA4ToolsGUI(QMainWindow):
                 {"name": "Date Range Picker", "description": "Select and validate date ranges", "module": None, "class": None},
                 {"name": "Timezone Converter", "description": "Convert timestamps across timezones", "module": None, "class": None},
                 {"name": "Date Format Changer", "description": "Change date formats (YYYY-MM-DD, etc.)", "module": None, "class": None},
+                {
+                    "name": "Date Format Converter",
+                    "description": "🗓️ Normalize date columns across CSV files with flexible format rules",
+                    "module": "tools.date_time_utilities.date_format_converter",
+                    "class": "DateFormatConverterTool",
+                },
                 {"name": "Period Calculator", "description": "Calculate days, weeks, months between dates", "module": None, "class": None},
                 {"name": "Business Days Counter", "description": "Count working days excluding holidays", "module": None, "class": None},
                 {"name": "Date Parser", "description": "Parse dates from various string formats", "module": None, "class": None},
