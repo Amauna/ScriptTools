@@ -12,8 +12,11 @@ from __future__ import annotations
 import csv
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+import re
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, QSignalBlocker
 from PySide6.QtGui import QFont
@@ -26,16 +29,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QScrollArea,
 )
 
 from tools.date_time_utilities.date_format_converter_engine import (
@@ -62,6 +66,53 @@ COLUMN_ALIAS_PRIORITY: Tuple[str, ...] = (
 )
 DEFAULT_INPUT_FORMATS = ["%Y-%m-%d", "%m/%d/%Y", "%Y%m%d"]
 DEFAULT_OUTPUT_FORMAT = "%Y-%m-%d"
+FORMAT_SAMPLE_LIMIT = 3
+
+FORMAT_SPEC_MAP: Dict[str, str] = {
+    "%Y": "YYYY",
+    "%y": "YY",
+    "%m": "MM",
+    "%-m": "M",
+    "%d": "DD",
+    "%-d": "D",
+    "%H": "HH",
+    "%I": "hh",
+    "%M": "mm",
+    "%S": "ss",
+    "%b": "MMM",
+    "%B": "MMMM",
+    "%a": "ddd",
+    "%A": "dddd",
+}
+
+FORMAT_REGEX_PATTERNS: List[Tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^\d{4}-\d{2}-\d{2}$"), "YYYY-MM-DD"),
+    (re.compile(r"^\d{4}/\d{2}/\d{2}$"), "YYYY/MM/DD"),
+    (re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$"), "M/D/YYYY"),
+    (re.compile(r"^\d{2}/\d{2}/\d{4}$"), "MM/DD/YYYY"),
+    (re.compile(r"^\d{2}/\d{2}/\d{2}$"), "MM/DD/YY"),
+    (re.compile(r"^\d{1,2}-[A-Za-z]{3}-\d{2}$"), "D-MMM-YY"),
+    (re.compile(r"^\d{2}-[A-Za-z]{3}-\d{2}$"), "DD-MMM-YY"),
+    (re.compile(r"^[A-Za-z]{3} \d{1,2}, \d{4}$"), "MMM DD, YYYY"),
+    (re.compile(r"^[A-Za-z]{3} \d{1,2} \d{4}$"), "MMM DD YYYY"),
+    (re.compile(r"^\d{1,2} [A-Za-z]{3} \d{4}$"), "D MMM YYYY"),
+]
+
+FORMAT_PRESETS_INPUT: Tuple[Tuple[str, str], ...] = (
+    ("ISO 8601 (YYYY-MM-DD)", "%Y-%m-%d"),
+    ("US Slash (MM/DD/YYYY)", "%m/%d/%Y"),
+    ("US Slash Short (MM/DD/YY)", "%m/%d/%y"),
+    ("Compact (YYYYMMDD)", "%Y%m%d"),
+    ("Month Name (MMM DD, YYYY)", "%b %d, %Y"),
+    ("Day-Month-Year (DD-MMM-YY)", "%d-%b-%y"),
+)
+
+FORMAT_PRESETS_OUTPUT: Tuple[Tuple[str, str], ...] = (
+    ("ISO 8601 (YYYY-MM-DD)", "%Y-%m-%d"),
+    ("US Slash (MM/DD/YYYY)", "%m/%d/%Y"),
+    ("European Dots (DD.MM.YYYY)", "%d.%m.%Y"),
+    ("Long Month (MMMM DD, YYYY)", "%B %d, %Y"),
+)
 
 
 def _normalise_column_name(name: str) -> str:
@@ -186,13 +237,20 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
     def __init__(self, parent, input_path: str, output_path: str) -> None:
         super().__init__(parent, input_path, output_path)
 
-        self.csv_files: List[Path] = []
+        self.csv_files_all: List[Path] = []
+        self.csv_files_target: List[Path] = []
         self.file_stats: Dict[str, Dict[str, int]] = {}
         self.preview_cache: Dict[str, Tuple[List[str], List[List[str]]]] = {}
+        self.file_map: Dict[str, Path] = {}
+        self.file_check_state: Dict[str, bool] = {}
         self.column_frequencies: Counter[str] = Counter()
-        self.column_candidates: List[str] = []
         self.detected_column: Optional[str] = None
         self.total_scan_bytes: int = 0
+        self.format_groups: List[Dict[str, Any]] = []
+        self.format_default_signature: Optional[str] = None
+        self.format_checkbox_map: Dict[str, QCheckBox] = {}
+        self.format_lists: Dict[str, QListWidget] = {}
+        self.suppress_item_change: bool = False
 
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[DateConverterWorker] = None
@@ -269,49 +327,33 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # Left panel: file table + preview
+        # Left panel: format tabs
         left_panel = QFrame()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(8)
 
-        files_label = QLabel("📁 Discovered Files")
-        files_label.setFont(QFont("Arial", 12, QFont.Bold))
-        left_layout.addWidget(files_label)
+        formats_label = QLabel("📁 Detected Date Formats")
+        formats_label.setFont(QFont("Arial", 12, QFont.Bold))
+        left_layout.addWidget(formats_label)
 
-        self.files_table = QTableWidget()
-        self.files_table.setColumnCount(4)
-        self.files_table.setHorizontalHeaderLabels(["Filename", "Columns", "Rows", "Size"])
-        header_view = self.files_table.horizontalHeader()
-        header_view.setSectionResizeMode(0, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.files_table.verticalHeader().setVisible(False)
-        self.files_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.files_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.files_table.setAlternatingRowColors(True)
-        self.files_table.itemSelectionChanged.connect(self._on_file_selected)
-        left_layout.addWidget(self.files_table)
-
-        preview_label = QLabel(f"👁️ Preview (first {PREVIEW_ROW_LIMIT} rows)")
-        preview_label.setFont(QFont("Arial", 12, QFont.Bold))
-        left_layout.addWidget(preview_label)
-
-        self.preview_table = QTableWidget()
-        self.preview_table.horizontalHeader().setStretchLastSection(True)
-        left_layout.addWidget(self.preview_table)
+        self.format_tabs = QTabWidget()
+        self.format_tabs.setTabBarAutoHide(False)
+        self.format_tabs.setUsesScrollButtons(True)
+        self.format_tabs.currentChanged.connect(self._on_tab_changed)
+        left_layout.addWidget(self.format_tabs)
 
         splitter.addWidget(left_panel)
 
-        # Right panel: column detection + settings
+        # Right panel: format selection + settings
         right_panel = QFrame()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(10, 10, 10, 10)
         right_layout.setSpacing(10)
 
-        self.column_group = self._build_column_group()
-        right_layout.addWidget(self.column_group)
+        self.format_selection_group = self._build_format_selection_group()
+        right_layout.addWidget(self.format_selection_group)
+        self._rebuild_format_checkboxes()
 
         settings_group = self._build_settings_group()
         right_layout.addWidget(settings_group)
@@ -347,8 +389,8 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
 
         self.execution_log = self.create_execution_log(main_layout)
 
-    def _build_column_group(self) -> QGroupBox:
-        group = QGroupBox("🎯 Target Column")
+    def _build_format_selection_group(self) -> QGroupBox:
+        group = QGroupBox("🎯 Format Selection")
         layout = QVBoxLayout(group)
         layout.setSpacing(6)
 
@@ -360,19 +402,34 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         self.scan_stats_label.setWordWrap(True)
         layout.addWidget(self.scan_stats_label)
 
-        override_row = QHBoxLayout()
-        override_row.setSpacing(8)
-        self.override_checkbox = QCheckBox("Manual override")
-        self.override_checkbox.setEnabled(False)
-        self.override_checkbox.stateChanged.connect(self._on_override_toggled)
-        override_row.addWidget(self.override_checkbox)
-        override_row.addStretch()
-        layout.addLayout(override_row)
+        self.format_summary_label = QLabel("No format groups yet.")
+        self.format_summary_label.setWordWrap(True)
+        layout.addWidget(self.format_summary_label)
 
-        self.column_override_combo = QComboBox()
-        self.column_override_combo.setEnabled(False)
-        self.column_override_combo.currentTextChanged.connect(self._on_override_selection_changed)
-        layout.addWidget(self.column_override_combo)
+        button_row = QHBoxLayout()
+        self.select_all_formats_button = QPushButton("Select All")
+        self.select_all_formats_button.setEnabled(False)
+        self.select_all_formats_button.clicked.connect(lambda: self._bulk_toggle_formats(True))
+        button_row.addWidget(self.select_all_formats_button)
+
+        self.select_none_formats_button = QPushButton("Select None")
+        self.select_none_formats_button.setEnabled(False)
+        self.select_none_formats_button.clicked.connect(lambda: self._bulk_toggle_formats(False))
+        button_row.addStretch()
+        button_row.addWidget(self.select_none_formats_button)
+        layout.addLayout(button_row)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.format_checkbox_widget = QWidget()
+        self.format_checkbox_layout = QVBoxLayout(self.format_checkbox_widget)
+        self.format_checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        self.format_checkbox_layout.setSpacing(4)
+        self.format_checkbox_widget.setMinimumHeight(140)
+        scroll_area.setWidget(self.format_checkbox_widget)
+        layout.addWidget(scroll_area)
 
         return group
 
@@ -385,11 +442,32 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         self.input_formats_edit = QTextEdit()
         self.input_formats_edit.setPlaceholderText("%Y-%m-%d\n%m/%d/%Y\n%Y%m%d")
         self.input_formats_edit.setPlainText("\n".join(DEFAULT_INPUT_FORMATS))
+        self.input_formats_edit.textChanged.connect(self._on_input_formats_changed)
         layout.addWidget(self.input_formats_edit)
 
+        preset_row = QHBoxLayout()
+        self.input_format_preset_combo = QComboBox()
+        for label, fmt in FORMAT_PRESETS_INPUT:
+            self.input_format_preset_combo.addItem(label, fmt)
+        preset_row.addWidget(self.input_format_preset_combo)
+
+        insert_button = QPushButton("Insert Preset")
+        insert_button.clicked.connect(self._on_add_input_preset)
+        preset_row.addWidget(insert_button)
+        preset_row.addStretch()
+        layout.addLayout(preset_row)
+
         layout.addWidget(QLabel("Output format:"))
+        output_row = QHBoxLayout()
         self.output_format_edit = QLineEdit(DEFAULT_OUTPUT_FORMAT)
-        layout.addWidget(self.output_format_edit)
+        output_row.addWidget(self.output_format_edit)
+
+        self.output_format_combo = QComboBox()
+        for label, fmt in FORMAT_PRESETS_OUTPUT:
+            self.output_format_combo.addItem(label, fmt)
+        self.output_format_combo.currentIndexChanged.connect(self._on_output_preset_changed)
+        output_row.addWidget(self.output_format_combo)
+        layout.addLayout(output_row)
 
         fallback_row = QHBoxLayout()
         fallback_row.setSpacing(8)
@@ -429,10 +507,16 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
 
     def _reset_scan_state(self) -> None:
         self.preview_cache.clear()
+        self.file_map.clear()
         self.column_frequencies.clear()
-        self.column_candidates.clear()
         self.detected_column = None
         self.total_scan_bytes = 0
+        self.format_groups.clear()
+        self.format_default_signature = None
+        self.format_checkbox_map.clear()
+        self.format_lists.clear()
+        self.file_check_state.clear()
+        self.csv_files_target.clear()
 
     def _scan_single_file(self, file_path: Path) -> Tuple[List[str], List[List[str]], int]:
         header: List[str] = []
@@ -470,7 +554,7 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         self.progress_bar.setVisible(False)
         self._set_status(f"Scanning {len(csv_files)} file(s)…")
 
-        self.csv_files = csv_files
+        self.csv_files_all = csv_files
         self.file_stats.clear()
         self._reset_scan_state()
 
@@ -495,6 +579,7 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
                 if self.execution_log:
                     self.log(f"⚠️ Unable to read {file_path.name}: {exc}")
 
+            self.file_map[str(file_path)] = file_path
             self.file_stats[str(file_path)] = {
                 "columns": len(header),
                 "rows": row_count,
@@ -504,78 +589,30 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
             if self.execution_log and index % 25 == 0:
                 self.log(f"…scanned {index}/{len(csv_files)} files")
 
-        self.column_candidates = sorted(
-            self.column_frequencies.keys(),
-            key=lambda name: (-self.column_frequencies[name], name.lower()),
-        )
-        self.detected_column = self._resolve_target_column()
-
-        self._update_file_table()
-        if self.csv_files:
-            self.files_table.selectRow(0)
-            self.refresh_preview(self.csv_files[0])
-
         self.is_scanning = False
         self.scan_button.setEnabled(True)
-        self._update_column_detection_ui()
+        self.detected_column = self._resolve_target_column()
+        self._update_column_status_text()
+        self._update_format_groups()
         self._update_scan_stats()
         self._update_convert_button_state()
-        self._set_status(f"Scan complete — {len(self.csv_files)} file(s)")
+        self._set_status(f"Scan complete — {len(self.csv_files_all)} file(s)")
 
         if self.execution_log:
             self.log(
-                f"✅ Scan complete. Files: {len(self.csv_files)}, Columns discovered: {len(self.column_frequencies)}, Total size: {_format_bytes(self.total_scan_bytes)}"
+                f"✅ Scan complete. Files: {len(self.csv_files_all)}, Columns discovered: {len(self.column_frequencies)}, Total size: {_format_bytes(self.total_scan_bytes)}"
             )
 
-    def _update_file_table(self) -> None:
-        self.files_table.setRowCount(0)
-        for file_path in self.csv_files:
-            stats = self.file_stats.get(str(file_path), {})
-            row_index = self.files_table.rowCount()
-            self.files_table.insertRow(row_index)
-
-            self.files_table.setItem(row_index, 0, QTableWidgetItem(file_path.name))
-            self.files_table.setItem(row_index, 1, QTableWidgetItem(str(stats.get("columns", 0))))
-            self.files_table.setItem(row_index, 2, QTableWidgetItem(str(stats.get("rows", 0))))
-            self.files_table.setItem(row_index, 3, QTableWidgetItem(_format_bytes(stats.get("size", 0))))
-
-    def _on_file_selected(self) -> None:
-        selected_items = self.files_table.selectedItems()
-        if not selected_items:
-            return
-        row = selected_items[0].row()
-        if 0 <= row < len(self.csv_files):
-            self.refresh_preview(self.csv_files[row])
-
-    def refresh_preview(self, file_path: Optional[Path] = None) -> None:
-        self.preview_table.clear()
-        if not file_path:
-            self.preview_table.setRowCount(0)
-            self.preview_table.setColumnCount(0)
-            return
-
-        header, rows = self.preview_cache.get(str(file_path), ([], []))
-        self.preview_table.setColumnCount(len(header))
-        self.preview_table.setHorizontalHeaderLabels(header)
-        self.preview_table.setRowCount(len(rows))
-
-        for row_index, row in enumerate(rows):
-            padded = row + [""] * (len(header) - len(row))
-            for column_index, value in enumerate(padded[: len(header)]):
-                item = QTableWidgetItem(value)
-                item.setFlags(Qt.ItemIsEnabled)
-                self.preview_table.setItem(row_index, column_index, item)
-
     def _update_scan_stats(self) -> None:
-        if not self.csv_files:
+        if not self.csv_files_all:
             self.scan_stats_label.setText("No files scanned.")
             return
         self.scan_stats_label.setText(
-            f"Files: {len(self.csv_files)}, Total size: {_format_bytes(self.total_scan_bytes)}, Columns discovered: {len(self.column_frequencies)}"
+            f"Files: {len(self.csv_files_all)}, Total size: {_format_bytes(self.total_scan_bytes)}, Columns discovered: {len(self.column_frequencies)}"
         )
 
     # ------------------------------------------------------------------
-    # Column detection + overrides
+    # Column and format helpers
     # ------------------------------------------------------------------
 
     def _resolve_target_column(self) -> Optional[str]:
@@ -614,22 +651,14 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         )
 
     def _get_active_column(self) -> Optional[str]:
-        if self.override_checkbox.isChecked():
-            value = self.column_override_combo.currentText().strip()
-            return value or None
         return self.detected_column
 
-    def _refresh_column_status_text(self) -> None:
+    def _update_column_status_text(self) -> None:
         if not self.column_status_label:
             return
-        if self.override_checkbox.isChecked():
-            selected = self.column_override_combo.currentText().strip()
-            if selected:
-                self.column_status_label.setText(
-                    f"Manual override active → using <b>{selected}</b>."
-                )
-            else:
-                self.column_status_label.setText("Manual override active — select a column.")
+
+        if not self.csv_files_all:
+            self.column_status_label.setText("Scan a folder to detect date-like columns.")
             return
 
         if self.detected_column:
@@ -639,43 +668,392 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
             )
         else:
             self.column_status_label.setText(
-                "No date-like column detected. Enable manual override to choose one."
+                "No date-like column detected. Adjust input formats or rescan."
             )
 
-    def _update_column_detection_ui(self) -> None:
-        with QSignalBlocker(self.override_checkbox):
-            self.override_checkbox.setEnabled(bool(self.csv_files))
-            if not self.csv_files:
-                self.override_checkbox.setChecked(False)
+    # ------------------------------------------------------------------
+    # Format grouping
+    # ------------------------------------------------------------------
 
-        with QSignalBlocker(self.column_override_combo):
-            self.column_override_combo.clear()
-            for column in self.column_candidates:
-                self.column_override_combo.addItem(column)
-            if self.detected_column:
-                index = self.column_override_combo.findText(self.detected_column)
-                if index >= 0:
-                    self.column_override_combo.setCurrentIndex(index)
+    def _get_input_formats_for_detection(self) -> List[str]:
+        text = self.input_formats_edit.toPlainText() if self.input_formats_edit else ""
+        formats = [line.strip() for line in text.splitlines() if line.strip()]
+        return formats or DEFAULT_INPUT_FORMATS
 
-        self.column_override_combo.setEnabled(self.override_checkbox.isChecked())
-        self._refresh_column_status_text()
+    def _match_signature(self, value: str, formats: List[str]) -> Optional[str]:
+        cleaned = value.strip()
+        if not cleaned:
+            return None
 
-    def _on_override_toggled(self, state: int) -> None:
-        enabled = state == Qt.Checked
-        self.column_override_combo.setEnabled(enabled)
-        self._refresh_column_status_text()
+        for fmt in formats:
+            try:
+                datetime.strptime(cleaned, fmt)
+            except ValueError:
+                continue
+            return self._strftime_to_signature(fmt)
+
+        for pattern, signature in FORMAT_REGEX_PATTERNS:
+            if pattern.match(cleaned):
+                return signature
+
+        return None
+
+    def _strftime_to_signature(self, fmt: str) -> str:
+        signature_parts: List[str] = []
+        i = 0
+        length = len(fmt)
+        while i < length:
+            if fmt[i] == "%":
+                token = fmt[i : i + 2]
+                replacement = FORMAT_SPEC_MAP.get(token)
+                if replacement is None and i + 2 < length and fmt[i + 1] == "-":
+                    token = fmt[i : i + 3]
+                    replacement = FORMAT_SPEC_MAP.get(token)
+                    if replacement is not None:
+                        signature_parts.append(replacement)
+                        i += 3
+                        continue
+                if replacement is not None:
+                    signature_parts.append(replacement)
+                elif i + 1 < length:
+                    signature_parts.append(fmt[i + 1])
+                i += 2
+            else:
+                signature_parts.append(fmt[i])
+                i += 1
+        return "".join(signature_parts).strip()
+
+    def _determine_file_signature(
+                self,
+        file_path: Path,
+        column_name: str,
+        formats: List[str],
+    ) -> str:
+        header, rows = self.preview_cache.get(str(file_path), ([], []))
+        if not header or column_name not in header:
+            return "Missing Column"
+
+        column_index = header.index(column_name)
+        samples: List[str] = []
+        for row in rows:
+            if column_index >= len(row):
+                continue
+            value = row[column_index].strip()
+            if value:
+                samples.append(value)
+            if len(samples) >= FORMAT_SAMPLE_LIMIT:
+                break
+
+        if not samples:
+            return "No Sample"
+
+        signatures = [
+            signature
+            for signature in (
+                self._match_signature(sample, formats) for sample in samples
+            )
+            if signature
+        ]
+        if signatures:
+            return Counter(signatures).most_common(1)[0][0]
+        return "Unknown Format"
+
+    def _update_format_groups(self) -> None:
+        if not self.csv_files_all:
+            self.format_groups = []
+            self.format_default_signature = None
+            self.file_check_state.clear()
+            self.csv_files_target = []
+            self._rebuild_format_checkboxes()
+            self._populate_format_tabs()
+            self._update_format_summary()
+            self._update_convert_button_state()
+            return
+
+        column_name = self._get_active_column()
+        if not column_name:
+            self.format_groups = []
+            self.format_default_signature = None
+            self.file_check_state.clear()
+            self.csv_files_target = []
+            self._rebuild_format_checkboxes()
+            self._populate_format_tabs()
+            self._update_format_summary()
+            self._update_convert_button_state()
+            return
+
+        formats = self._get_input_formats_for_detection()
+        signature_map: Dict[str, List[Path]] = {}
+        for file_path in self.csv_files_all:
+            signature = self._determine_file_signature(file_path, column_name, formats)
+            signature_map.setdefault(signature, []).append(file_path)
+
+        sorted_groups = sorted(
+            signature_map.items(),
+            key=lambda item: (-len(item[1]), item[0].lower()),
+        )
+        if not sorted_groups:
+            self.format_groups = []
+            self.format_default_signature = None
+            self.file_check_state.clear()
+            self.csv_files_target = []
+            self._rebuild_format_checkboxes()
+            self._populate_format_tabs()
+            self._update_format_summary()
+            self._update_convert_button_state()
+            return
+
+        default_signature = sorted_groups[0][0]
+        self.format_default_signature = default_signature
+        self.format_groups = [
+            {
+                "signature": signature,
+                "files": files,
+                "is_default": signature == default_signature,
+            }
+            for signature, files in sorted_groups
+        ]
+
+        self.file_check_state = {}
+        for group in self.format_groups:
+            is_default = group["is_default"]
+            default_checked = not is_default or len(self.format_groups) == 1
+            for file_path in group["files"]:
+                self.file_check_state[str(file_path)] = default_checked
+
+        self._rebuild_format_checkboxes()
+        self._populate_format_tabs()
+        self._recompute_target_files()
+        self._update_format_summary()
         self._update_convert_button_state()
 
-    def _on_override_selection_changed(self) -> None:
-        self._refresh_column_status_text()
+    def _rebuild_format_checkboxes(self) -> None:
+        while self.format_checkbox_layout.count():
+            item = self.format_checkbox_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.format_checkbox_map.clear()
+
+        if not self.format_groups:
+            placeholder = QLabel("No detected date formats yet. Scan CSV files to populate this list.")
+            placeholder.setWordWrap(True)
+            placeholder.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            self.format_checkbox_layout.addWidget(placeholder)
+        else:
+            for group in self.format_groups:
+                signature = group["signature"]
+                files = group["files"]
+                checked_count = sum(
+                    1 for path in files if self.file_check_state.get(str(path), False)
+                )
+                checkbox = QCheckBox(
+                    f"{signature} ({len(files)} file{'s' if len(files) != 1 else ''})"
+                )
+                checkbox.setTristate(True)
+                state = Qt.PartiallyChecked
+                if checked_count == 0:
+                    state = Qt.Unchecked
+                elif checked_count == len(files):
+                    state = Qt.Checked
+                checkbox.setCheckState(state)
+                checkbox.stateChanged.connect(
+                    lambda state, sig=signature: self._on_format_checkbox_toggled(sig, state)
+                )
+                self.format_checkbox_layout.addWidget(checkbox)
+                self.format_checkbox_map[signature] = checkbox
+
+        self.format_checkbox_layout.addStretch()
+
+        self.select_all_formats_button.setEnabled(True)
+        self.select_none_formats_button.setEnabled(True)
+
+    def _on_format_checkbox_toggled(self, signature: str, state: int) -> None:
+        if state == Qt.PartiallyChecked:
+            return
+        include = state == Qt.Checked
+        group = next((g for g in self.format_groups if g["signature"] == signature), None)
+        if not group:
+            return
+
+        self.suppress_item_change = True
+        try:
+            for file_path in group["files"]:
+                key = str(file_path)
+                self.file_check_state[key] = include
+                list_widget = self.format_lists.get(signature)
+                if list_widget is None:
+                    continue
+                for index in range(list_widget.count()):
+                    item = list_widget.item(index)
+                    if item.data(Qt.UserRole) == key:
+                        item.setCheckState(Qt.Checked if include else Qt.Unchecked)
+                        break
+        finally:
+            self.suppress_item_change = False
+
+        self._recompute_target_files()
+        self._update_format_checkbox_state(signature)
+        self._update_format_summary()
         self._update_convert_button_state()
+
+    def _bulk_toggle_formats(self, include: bool) -> None:
+        if not self.format_groups:
+            return
+
+        self.suppress_item_change = True
+        try:
+            for group in self.format_groups:
+                for file_path in group["files"]:
+                    key = str(file_path)
+                    self.file_check_state[key] = include
+                    list_widget = self.format_lists.get(group["signature"])
+                    if list_widget is None:
+                        continue
+                    for index in range(list_widget.count()):
+                        item = list_widget.item(index)
+                        if item.data(Qt.UserRole) == key:
+                            item.setCheckState(Qt.Checked if include else Qt.Unchecked)
+            for signature in self.format_lists.keys():
+                self._update_format_checkbox_state(signature)
+        finally:
+            self.suppress_item_change = False
+
+        self._recompute_target_files()
+        self._update_format_summary()
+        self._update_convert_button_state()
+
+    def _populate_format_tabs(self) -> None:
+        self.format_tabs.blockSignals(True)
+        self.format_tabs.clear()
+        self.format_lists.clear()
+
+        if not self.format_groups:
+            self.format_tabs.setTabBarAutoHide(True)
+            self.format_tabs.blockSignals(False)
+            return
+
+        self.format_tabs.setTabBarAutoHide(len(self.format_groups) <= 1)
+
+        for group in self.format_groups:
+            signature = group["signature"]
+            files = group["files"]
+            list_widget = QListWidget()
+            list_widget.setSelectionMode(QListWidget.NoSelection)
+            list_widget.itemChanged.connect(self._on_list_item_changed)
+
+            self.suppress_item_change = True
+            try:
+                for file_path in files:
+                    key = str(file_path)
+                    item = QListWidgetItem(file_path.name)
+                    item.setData(Qt.UserRole, key)
+                    item.setData(Qt.UserRole + 1, signature)
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                    checked = self.file_check_state.get(key, False)
+                    item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                    list_widget.addItem(item)
+            finally:
+                self.suppress_item_change = False
+
+            tab_label = signature
+            if group["is_default"] and len(self.format_groups) > 1:
+                tab_label = f"{tab_label} (baseline)"
+            self.format_tabs.addTab(list_widget, tab_label)
+            self.format_lists[signature] = list_widget
+
+        self.format_tabs.blockSignals(False)
+
+    def _on_tab_changed(self, index: int) -> None:  # noqa: ARG002
+        return
+
+    def _on_list_item_changed(self, item: QListWidgetItem) -> None:
+        if self.suppress_item_change:
+            return
+        path_str = item.data(Qt.UserRole)
+        signature = item.data(Qt.UserRole + 1)
+        if not path_str or not signature:
+            return
+        self.file_check_state[path_str] = item.checkState() == Qt.Checked
+        self._recompute_target_files()
+        self._update_format_checkbox_state(signature)
+        self._update_format_summary()
+        self._update_convert_button_state()
+
+    def _recompute_target_files(self) -> None:
+        self.csv_files_target = [
+            path for path in self.csv_files_all if self.file_check_state.get(str(path), False)
+        ]
+
+    def _update_format_checkbox_state(self, signature: str) -> None:
+        checkbox = self.format_checkbox_map.get(signature)
+        if checkbox is None:
+            return
+        group = next((g for g in self.format_groups if g["signature"] == signature), None)
+        if not group:
+            return
+
+        total = len(group["files"])
+        checked = sum(
+            1 for path in group["files"] if self.file_check_state.get(str(path), False)
+        )
+        with QSignalBlocker(checkbox):
+            state = Qt.PartiallyChecked
+            if checked == 0:
+                state = Qt.Unchecked
+            elif checked == total:
+                state = Qt.Checked
+            checkbox.setCheckState(state)
+
+    def _update_format_summary(self) -> None:
+        if not self.format_groups:
+            self.format_summary_label.setText("No format groups yet.")
+            return
+
+        lines: List[str] = []
+        for group in self.format_groups:
+            total = len(group["files"])
+            selected = sum(
+                1 for path in group["files"] if self.file_check_state.get(str(path), False)
+            )
+            prefix = "Baseline" if group["is_default"] else "Variant"
+            noun = "file" if total == 1 else "files"
+            lines.append(
+                f"{prefix}: {group['signature']} ({selected}/{total} {noun} selected)"
+            )
+
+        selected_total = len(self.csv_files_target)
+        overall_total = len(self.csv_files_all)
+        lines.append(f"Selected for conversion: {selected_total}/{overall_total} file(s)")
+        self.format_summary_label.setText("<br>".join(lines))
+
+    def _on_input_formats_changed(self) -> None:
+        if self.is_scanning or self.is_converting:
+            return
+        if not self.csv_files_all:
+            return
+        self._update_format_groups()
+
+    def _on_add_input_preset(self) -> None:
+        fmt = self.input_format_preset_combo.currentData()
+        if not fmt:
+            return
+        existing = [line.strip() for line in self.input_formats_edit.toPlainText().splitlines() if line.strip()]
+        if fmt not in existing:
+            existing.append(fmt)
+            self.input_formats_edit.setPlainText("\n".join(existing))
+
+    def _on_output_preset_changed(self, index: int) -> None:  # noqa: ARG002
+        fmt = self.output_format_combo.currentData()
+        if fmt:
+            self.output_format_edit.setText(fmt)
 
     # ------------------------------------------------------------------
     # Conversion
     # ------------------------------------------------------------------
 
     def _collect_options(self) -> Optional[ConverterOptions]:
-        if not self.csv_files:
+        if not self.csv_files_target:
             QMessageBox.warning(self, "No Files", "Scan CSV files before converting.")
             return None
 
@@ -684,7 +1062,7 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
             QMessageBox.warning(
                 self,
                 "No Column Detected",
-                "No date-like column detected. Enable manual override to pick one.",
+                "No date-like column detected. Adjust input formats and rescan.",
             )
             return None
 
@@ -736,7 +1114,7 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
 
     def _estimate_total_bytes(self) -> int:
         total = 0
-        for path in self.csv_files:
+        for path in self.csv_files_target:
             if path.exists():
                 total += path.stat().st_size
         return total
@@ -777,13 +1155,13 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         self.convert_button.setEnabled(False)
 
         self.progress_bar.setVisible(True)
-        self.progress_bar.setMaximum(len(self.csv_files))
+        self.progress_bar.setMaximum(len(self.csv_files_target))
         self.progress_bar.setValue(0)
-        self._set_status(f"Converting {len(self.csv_files)} file(s)…")
+        self._set_status(f"Converting {len(self.csv_files_target)} file(s)…")
 
         self.worker_thread = QThread()
         self.worker = DateConverterWorker(
-            files=self.csv_files,
+            files=self.csv_files_target,
             options=options,
             output_root=run_root,
             manifest_path=manifest_path,
@@ -841,7 +1219,7 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         parsed = summary.get("parsed", 0)
         inferred = summary.get("parsed_inferred", 0)
         fallback = summary.get("fallback", 0)
-        total = summary.get("total", len(self.csv_files))
+        total = summary.get("total", len(self.csv_files_target))
         total_bytes = summary.get("bytes_total", 0)
         manifest = summary.get("manifest", "")
         results: List[Dict] = summary.get("results", [])
@@ -911,10 +1289,12 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
     # ------------------------------------------------------------------
 
     def _update_convert_button_state(self) -> None:
-        has_files = bool(self.csv_files)
+        has_files = bool(self.csv_files_target)
         has_column = bool(self._get_active_column())
         if has_files and not has_column:
-            self.convert_button.setToolTip("No target column detected. Enable manual override to select one.")
+            self.convert_button.setToolTip("No date column detected. Adjust input formats and rescan.")
+        elif not has_files:
+            self.convert_button.setToolTip("No files selected for conversion. Adjust format filters or rescan.")
         else:
             self.convert_button.setToolTip("")
         self.convert_button.setEnabled(has_files and has_column and not self.is_converting and not self.is_scanning)
@@ -933,6 +1313,9 @@ class DateFormatConverterTool(PathConfigMixin, BaseToolDialog):
         theme.apply_to_widget(self.summary_label, "label_muted")
         theme.apply_to_widget(self.column_status_label, "label")
         theme.apply_to_widget(self.scan_stats_label, "label_muted")
+        theme.apply_to_widget(self.format_summary_label, "label_muted")
+        theme.apply_to_widget(self.select_all_formats_button, "button_secondary")
+        theme.apply_to_widget(self.select_none_formats_button, "button_secondary")
 
         frames = [
             getattr(self, "column_group", None),

@@ -187,10 +187,13 @@ python tools\data_cleaning_transformation\metric_fixer_batch.py `
 
 ### 🕒 Date & Time Utilities
 - **`tools/date_time_utilities/date_format_converter.py` — Date Format Converter (GUI)**
-  - 🧠 Auto-detects date columns across hundreds of CSVs using alias heuristics, with a manual override toggle for edge cases.
+  - 🧠 Auto-detects date columns across hundreds of CSVs and surfaces format distribution instantly—no manual column picking required.
+  - 🗂️ Clusters files by detected date format; divergent CSVs appear under their own tabs with per-format checkboxes and file-level toggles for surgical selection.
+  - 🎯 Converts non-baseline formats by default; enable the baseline tab (or individual files) with a single click before launching the batch.
   - 🪄 Streams each file chunk-by-chunk (configurable chunk size) so large datasets stay under memory limits while the UI stays responsive.
   - ⚡ Respects `workers` to fan out conversion across CPU cores via the shared engine, honouring resume, dry-run, and keep-original options.
   - 📊 Surfaces live progress (success, skip, failure counts), emits detailed summaries/manifest links, and includes total-byte telemetry for auditing.
+  - 📋 Conversion settings include preset pickers for both input and output formats—toggle a preset and the fields update instantly.
 
 ### ✅ Data Validation & Quality
 - **`bigquery_transfer_diagnostics.py` — BigQuery Transfer Diagnostics**

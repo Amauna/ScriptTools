@@ -125,10 +125,12 @@ Bookmark it, tattoo it, tape it to your monitor. Obey the sequence and the suite
 
 ## XI. Date Format Converter GUI (High-Volume Rituals)
 - Launch from the suite (`Date & Time Utilities → Date Format Converter`) after scanning your CSV folder.
-- The scan pass is now header-first: it caches previews, counts rows, and auto-detects date columns (aliases like `Date`, `session_date`, `Event Date` all qualify). If you’re dealing with a renegade column name, tick **Manual override** and choose it explicitly.
+- The scan pass is now header-first: it caches previews, counts rows, and auto-detects the date column without any manual selection.
+- Scan results are grouped by format: each format gets its own tab listing just the filenames, plus a checkbox to enable/disable that entire format. You can also uncheck individual files inside a tab for finer control.
 - Before converting:
   - Adjust **chunk size** (default `50 000`) if you need to squeeze RAM—smaller chunks reduce memory but increase runtime.
   - Set **workers** to match available CPU cores; 2–4 is the sweet spot unless you enjoy throttling your laptop fan.
   - The dialog will warn you when total bytes exceed ~1.5 GB. That’s your cue to consider a dry-run or drop `workers` down a notch.
+- Conversion defaults to targeting only the formats (and files) you leave checked. Flip a format checkbox—or individual file checkboxes—if you want to include or exclude them. Use the built-in preset dropdowns to quickly add common input formats or swap the output format template without manual typing.
 - During conversion you’ll see live progress with success/skip/failure counts plus per-file status in the execution log. Skipped entries (resume mode) still advance the bar so you know nothing stalled.
 - The summary card links to the manifest and shows parsed / inferred / fallback counts. Use the manifest to triage stubborn files without re-running the entire batch.
