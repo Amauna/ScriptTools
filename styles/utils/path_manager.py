@@ -269,6 +269,22 @@ class PathManager:
                     "success": success_dir,
                     "failed": failed_dir,
                 }
+            case "url_labeler":
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
+                run_root = _create_timestamped_subdir(tool_root)
+                result = {
+                    "tool_root": tool_root,
+                    "script_root": tool_root,
+                    "root": run_root,
+                }
+            case "platform_source_labeler":
+                tool_root = _ensure_tool_output_root(base_output, tool_id)
+                run_root = _create_timestamped_subdir(tool_root)
+                result = {
+                    "tool_root": tool_root,
+                    "script_root": tool_root,
+                    "root": run_root,
+                }
             case _:
                 tool_root = _ensure_tool_output_root(base_output, tool_id)
                 script_root = _ensure_directory(tool_root / script_id)

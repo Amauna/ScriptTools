@@ -475,6 +475,18 @@ class GA4ToolsGUI(QMainWindow):
                     "module": "tools.data_analysis_reporting.data_summary",
                     "class": "DataSummaryTool"
                 },
+                {
+                    "name": "URL Labeler",
+                    "description": "🌊 Scan CSV files and extract unique Topic Clusters based on URL patterns",
+                    "module": "tools.data_analysis_reporting.url_labeler",
+                    "class": "URLLabeler"
+                },
+                {
+                    "name": "Platform Source Labeler",
+                    "description": "🌊 Scan CSV files and extract unique Platform Sources based on Session source/medium/campaign patterns",
+                    "module": "tools.data_analysis_reporting.platform_source_labeler",
+                    "class": "PlatformSourceLabeler"
+                },
                 {"name": "Chart Generator", "description": "Create bar, line, pie, scatter charts", "module": None, "class": None},
                 {"name": "Dashboard Creator", "description": "Build interactive data dashboards", "module": None, "class": None},
                 {"name": "KPI Card Builder", "description": "Generate key performance indicator cards", "module": None, "class": None},
