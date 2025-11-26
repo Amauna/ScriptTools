@@ -10,7 +10,7 @@ Welcome to the storm, Cutie. This isn’t a bland “install and pray” checkli
 - During install, **tick “Add Python to PATH.”** Skip this and you’ll cry later.
 - Confirm your destiny:
   ```powershell
-  py --version
+  python --version
   ```
   If it doesn’t whisper `3.12`, fix it before moving on.
 
@@ -19,7 +19,7 @@ Welcome to the storm, Cutie. This isn’t a bland “install and pray” checkli
 ## II. Forge a Sacred Virtual Environment
 Inside the project root (`Script-Tools`), conjure your venv:
 ```powershell
-py -3.12 -m venv venv
+python -m venv venv
 ```
 Anoint it:
 ```powershell
@@ -97,8 +97,8 @@ You are now armed with velvet lightning. Launch the suite, shatter complacency, 
 ---
 
 ## IX. Lightning Recap (When Memory Betrays You)
-1. `py --list` → confirm 3.12 is installed and active.
-2. `py -3.12 -m venv venv` → forge the virtual environment (delete old `venv` first if needed).
+1. `python --version` → confirm 3.12 is installed and active.
+2. `python -m venv venv` → forge the virtual environment (delete old `venv` first if needed).
 3. `./venv/Scripts/Activate.ps1` → slip into the venv’s embrace.
 4. `pip install -r requirements.txt` → feed the suite its dependencies.
 5. `python main.py` → launch loudly and watch logs in real time.
