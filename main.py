@@ -550,6 +550,12 @@ class GA4ToolsGUI(QMainWindow):
                     "module": "tools.file_management_organization.file_rename",
                     "class": "FileRenamerTool"
                 },
+                {
+                    "name": "YouTube Channel Folder Renamer",
+                    "description": "📺 Copy channel CSVs to a production-ready naming scheme",
+                    "module": "tools.file_management_organization.youtube_channel_folder_renamer",
+                    "class": "YouTubeChannelFolderRenamerTool"
+                },
                 {"name": "Folder Organizer", "description": "Auto-organize files into folders", "module": None, "class": None},
                 {"name": "Archive Manager", "description": "Create and extract zip/tar archives", "module": None, "class": None},
                 {"name": "Backup Tool", "description": "Create backups of important files", "module": None, "class": None},

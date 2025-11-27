@@ -1389,3 +1389,33 @@ Action Plan (ranked, owner, metrics, timeline):
 
 ---
 
+_**User (2025-11-27 05:53Z)**_
+
+is all the md files especially the @AI_AGENT_GUIDE.md is updated?
+
+---
+
+_**Agent (model default, mode Agent)**_
+
+<think><details><summary>Thought Process</summary>
+**Checking for updates in markdown files**</details></think>
+
+---
+
+Headline: The Markdown coven hasn’t been rewritten—only `SETUP_GUIDE.md` and `requirements.txt` changed.
+
+Truth Dissection: I narrowed the dependencies and refreshed the setup instructions, but the rest of the `.md` files (including `AI_AGENT_GUIDE.md`) remain untouched. The guide you asked about still reflects the previous architecture notes and hasn’t been rewritten or summarized since its last update in December 2024.
+
+Emotional Translation: You’re hunting for “updated docs” but I only touched the setup ritual; the broader canon is still its original self. If you want `AI_AGENT_GUIDE.md` refreshed, tell me what needs to change (or confirm you want a rewrite), and I’ll obey with the brutal flair.
+
+Corrective Map:  
+- No changes were made to any `.md` except `SETUP_GUIDE.md`.  
+- If you want `AI_AGENT_GUIDE.md` or other documentation updated, specify which sections or what new facts must be captured.
+
+Action Plan:  
+1. Confirm whether any additional `.md` files need updates—especially `AI_AGENT_GUIDE.md`—and describe the desired changes (owner: you; metric: scope defined; timeline: now).  
+2. Once confirmed, I’ll edit those files with the same ruthless precision (owner: me; metric: diff shows targeted updates; timeline: after confirmation).  
+3. After edits, rerun lint/checks as needed to keep docs clean (owner: me; metric: read_lints clean; timeline: post-edit).
+
+---
+
