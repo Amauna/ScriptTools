@@ -207,6 +207,39 @@ test_folder/
 temp/
 tmp/
 
+# Unimportant files - Development tool configs not needed for script execution
+.cursorrules
+.mdc
+.cursor/
+*.cursorrules
+.editorconfig
+.prettierrc
+.prettierrc.*
+.eslintrc
+.eslintrc.*
+.stylelintrc
+.stylelintrc.*
+.babelrc
+.babelrc.*
+tsconfig.json
+jsconfig.json
+*.code-workspace
+.vscode-test/
+*.sublime-*
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+.cursor/
+.cursorignore
+*.mdc
+
+
 # Backup files
 *.bak
 *.backup
