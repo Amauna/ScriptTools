@@ -10,31 +10,15 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-    QLineEdit, QPushButton, QFileDialog, QTextEdit, QCheckBox,
+    QApplication, QVBoxLayout, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QTextEdit, QCheckBox,
     QScrollArea, QWidget, QFrame, QMessageBox, QProgressBar
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QFont
 
-# Import NEW theme system ✨
-try:
-    from styles import ThemeLoader, get_theme_manager
-    from styles.components import ExecutionLogFooter, create_execution_log_footer
-    THEME_AVAILABLE = True
-except ImportError:
-    # Add parent directory to path for standalone execution
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    try:
-        from styles import ThemeLoader, get_theme_manager
-        from styles.components import ExecutionLogFooter, create_execution_log_footer
-        THEME_AVAILABLE = True
-    except ImportError:
-        # Ultimate fallback
-        THEME_AVAILABLE = False
-        print("⚠️  Theme not available, using default styling")
-        ExecutionLogFooter = None
-        create_execution_log_footer = None
+from styles.components import ExecutionLogFooter, create_execution_log_footer
+from tools.templates import BaseToolDialog, PathConfigMixin
 
 
 class FileRenameWorker(QObject):
@@ -226,48 +210,34 @@ class FileCheckbox(QWidget):
         self.checkbox.setChecked(checked)
 
 
-class FileRenamerTool(QDialog):
+class FileRenamerTool(PathConfigMixin, BaseToolDialog):
     """File Renamer Tool"""
+
+    PATH_CONFIG = {
+        "show_input": True,
+        "show_output": True,
+        "include_open_buttons": True,
+        "input_label": "📥 Input Folder:",
+        "output_label": "📤 Output Folder:",
+    }
     
     def __init__(self, parent=None, input_path: str = None, output_path: str = None):
-        super().__init__(parent)
-        
-        # Initialize comprehensive logging
-        self.setup_logging()
+        super().__init__(parent, input_path, output_path)
         
         # State - use provided paths or smart defaults
-        self.input_path = Path(input_path) if input_path else Path.cwd()
-        
-        # Smart default output path - create a timestamped folder
-        if output_path:
-            self.output_path = Path(output_path)
-        else:
-            # Create default output folder with timestamp
+        if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            default_output = Path.cwd() / "execution test" / "Output" / f"file_rename_{timestamp}"
+            base_output = self.output_path
+            default_output = base_output / f"file_rename_{timestamp}"
             default_output.mkdir(parents=True, exist_ok=True)
             self.output_path = default_output
+            self.path_manager.set_output_path(default_output)
+        
         self.scanned_files: List[Path] = []
         self.file_checkboxes: List[FileCheckbox] = []
         self.worker = None
         self.worker_thread = None
         self.is_renaming = False
-        
-        # Get theme - Inherit from parent (main GUI) using NEW system! ✨
-        self.current_theme = None
-        if THEME_AVAILABLE:
-            # Try to inherit theme from parent (main GUI)
-            if hasattr(parent, 'current_theme') and parent.current_theme:
-                self.current_theme = parent.current_theme
-                safe_theme_name = self.current_theme.theme_name.encode('ascii', 'ignore').decode('ascii')
-                print(f"✅ [THEME] Inherited from parent: {safe_theme_name}")
-            else:
-                # Fallback: load default theme
-                theme_manager = get_theme_manager()
-                themes = theme_manager.get_available_themes()
-                if themes:
-                    self.current_theme = theme_manager.load_theme(themes[0])
-                    print(f"✅ [THEME] Loaded default: {themes[0]}")
         
         # Setup
         self.setup_window()
@@ -319,22 +289,16 @@ class FileRenamerTool(QDialog):
         subtitle.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(subtitle)
         
-        # Input folder
-        input_layout = QHBoxLayout()
-        input_label = QLabel("Input Folder:")
-        input_label.setFont(QFont("Arial", 10, QFont.Bold))
-        input_label.setFixedWidth(100)
-        self.input_entry = QLineEdit()
-        self.input_entry.setPlaceholderText("Select input folder...")
-        self.input_entry.setText(str(self.input_path))
-        input_btn = QPushButton("📂 Browse")
-        input_btn.clicked.connect(self.browse_input)
-        input_btn.setFixedWidth(100)
-        input_layout.addWidget(input_label)
-        input_layout.addWidget(self.input_entry)
-        input_layout.addWidget(input_btn)
-        main_layout.addLayout(input_layout)
-        
+        # Path controls
+        self.build_path_controls(
+            main_layout,
+            show_input=True,
+            show_output=True,
+            include_open_buttons=True,
+            input_label="📥 Input Folder:",
+            output_label="📤 Output Folder:",
+        )
+
         # Scan button
         scan_layout = QHBoxLayout()
         self.scan_btn = QPushButton("🔍 Scan Folder")
@@ -432,24 +396,6 @@ class FileRenamerTool(QDialog):
         preview_layout.addWidget(self.preview_label)
         right_column.addLayout(preview_layout)
         
-        # Output folder
-        output_layout = QVBoxLayout()
-        output_label = QLabel("Output Folder:")
-        output_label.setFont(QFont("Arial", 10, QFont.Bold))
-        output_layout.addWidget(output_label)
-        
-        output_folder_layout = QHBoxLayout()
-        self.output_entry = QLineEdit()
-        self.output_entry.setPlaceholderText("Select output folder...")
-        self.output_entry.setText(str(self.output_path))
-        output_btn = QPushButton("📂 Browse")
-        output_btn.clicked.connect(self.browse_output)
-        output_btn.setFixedWidth(100)
-        output_folder_layout.addWidget(self.output_entry)
-        output_folder_layout.addWidget(output_btn)
-        output_layout.addLayout(output_folder_layout)
-        right_column.addLayout(output_layout)
-        
         # Rename button
         self.rename_btn = QPushButton("🚀 Rename Files")
         self.rename_btn.clicked.connect(self.rename_files)
@@ -497,69 +443,15 @@ class FileRenamerTool(QDialog):
         self.log_area.setMaximumHeight(150)
         main_layout.addWidget(self.log_area)
     
-    def apply_theme(self):
-        """Apply theme using NEW system! ✨"""
-        if not THEME_AVAILABLE or not self.current_theme:
-            return
-        
-        try:
-            # Apply theme to this dialog window
-            self.current_theme.apply_to_window(self)
-            
-            # Safe logging
-            safe_theme_name = self.current_theme.theme_name.encode('ascii', 'ignore').decode('ascii')
-            print(f"✅ [THEME] Applied to File Renamer tool: {safe_theme_name}")
-            
-        except Exception as e:
-            print(f"⚠️ [THEME] Error applying theme: {e}")
-    
-    def refresh_theme(self):
-        """Refresh theme when user switches - Inherit from parent! ✨"""
-        print(f"🔄 [THEME] refresh_theme() called on File Renamer tool!")
-        
-        if not THEME_AVAILABLE:
-            return
-        
-        try:
-            # Get theme from parent (main GUI)
-            parent = self.parent()
-            if hasattr(parent, 'current_theme') and parent.current_theme:
-                self.current_theme = parent.current_theme
-                safe_theme_name = self.current_theme.theme_name.encode('ascii', 'ignore').decode('ascii')
-                print(f"✅ [THEME] Inherited from parent: {safe_theme_name}")
-            else:
-                print(f"⚠️ [THEME] Parent has no theme, keeping current")
-            
-            # Reapply theme
-            self.apply_theme()
-            
-        except Exception as e:
-            print(f"⚠️ [THEME] Error refreshing theme: {e}")
-    
-    def log(self, message: str):
-        """Add message to log"""
+    def log(self, message: str, level: str = "INFO"):
+        """Add message to log and push into unified session log."""
+        super().log(message, level=level)
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_area.append(f"[{timestamp}] {message}")
     
-    def browse_input(self):
-        """Browse for input folder"""
-        folder = QFileDialog.getExistingDirectory(self, "Select Input Folder", str(self.input_path))
-        if folder:
-            self.input_path = Path(folder)
-            self.input_entry.setText(str(self.input_path))
-            self.log(f"📂 Input folder selected: {self.input_path}")
-    
-    def browse_output(self):
-        """Browse for output folder"""
-        folder = QFileDialog.getExistingDirectory(self, "Select Output Folder", str(self.output_path))
-        if folder:
-            self.output_path = Path(folder)
-            self.output_entry.setText(str(self.output_path))
-            self.log(f"📂 Output folder selected: {self.output_path}")
-    
     def scan_folder(self):
         """Scan input folder for files"""
-        input_path = Path(self.input_entry.text())
+        input_path = self.input_path
         
         if not input_path.exists():
             self.show_message("Invalid Path", "Input folder does not exist!", "warning")
@@ -685,16 +577,17 @@ class FileRenamerTool(QDialog):
         self.log(f"🚀 Starting rename operation for {len(selected_files)} file(s)...")
         
         # Create new timestamped output folder for this operation (if using default path)
-        current_output = Path(self.output_entry.text())
-        default_base = Path.cwd() / "execution test" / "Output"
+        base_output = self.path_manager.get_output_path()
+        current_output = self.output_path.resolve()
         
         # If current output is in the default base directory, create a new timestamped folder
-        if str(current_output).startswith(str(default_base)):
+        if current_output == base_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_output = default_base / f"file_rename_{timestamp}"
+            new_output = base_output / f"file_rename_{timestamp}"
             new_output.mkdir(parents=True, exist_ok=True)
             self.output_path = new_output
-            self.output_entry.setText(str(self.output_path))
+            self._sync_path_edits(self.input_path, self.output_path)
+            self.path_manager.set_output_path(new_output)
             self.log(f"📁 Created new output folder: {self.output_path}")
         else:
             # Use the manually selected output path
@@ -702,6 +595,8 @@ class FileRenamerTool(QDialog):
             if not self.output_path.exists():
                 self.output_path.mkdir(parents=True, exist_ok=True)
                 self.log(f"📁 Created output folder: {self.output_path}")
+            self._sync_path_edits(self.input_path, self.output_path)
+            self.path_manager.set_output_path(self.output_path)
         
         # Clean up any existing worker/thread first
         try:
@@ -899,10 +794,12 @@ class FileRenamerTool(QDialog):
         
         # Create new default output folder for next operation
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_output = Path.cwd() / "execution test" / "Output" / f"file_rename_{timestamp}"
+        base_output = self.path_manager.get_output_path()
+        default_output = base_output / f"file_rename_{timestamp}"
         default_output.mkdir(parents=True, exist_ok=True)
         self.output_path = default_output
-        self.output_entry.setText(str(self.output_path))
+        self.path_manager.set_output_path(default_output)
+        self._sync_path_edits(self.input_path, self.output_path)
         
         # Disable rename button
         self.rename_btn.setEnabled(False)
@@ -1000,7 +897,14 @@ class FileRenamerTool(QDialog):
             self.worker_thread.quit()
             self.worker_thread.wait(1000)
         
-        event.accept()
+        super().closeEvent(event)
+
+    def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
+        """Refresh UI fields when shared paths change."""
+        super()._handle_paths_changed(input_path, output_path)
+        self._sync_path_edits(input_path, output_path)
+        if self.execution_log:
+            self.execution_log.set_output_path(str(output_path))
 
 
 def main():

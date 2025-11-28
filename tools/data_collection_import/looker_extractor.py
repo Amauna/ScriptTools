@@ -15,11 +15,11 @@ from typing import List, Optional, Dict, Any
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QFrame, QWidget, QLineEdit, QComboBox, QCheckBox,
+    QFrame, QWidget, QLineEdit, QComboBox, QCheckBox, QFileDialog,
     QTextEdit, QMessageBox, QProgressBar, QDateEdit, QScrollArea
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QDate
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon, QTextCursor
 
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -29,14 +29,14 @@ except ImportError:
 
 # Import NEW theme system (with fallback for standalone execution)
 try:
-    from styles import ThemeLoader, get_theme_manager, hex_to_rgba
+    from styles import ThemeLoader, get_theme_manager, hex_to_rgba, get_path_manager, get_log_manager
     from styles.components import ExecutionLogFooter, create_execution_log_footer
     THEME_AVAILABLE = True
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     try:
-        from styles import ThemeLoader, get_theme_manager, hex_to_rgba
+        from styles import ThemeLoader, get_theme_manager, hex_to_rgba, get_path_manager, get_log_manager
         from styles.components import ExecutionLogFooter, create_execution_log_footer
         THEME_AVAILABLE = True
     except ImportError:
@@ -47,6 +47,9 @@ except ImportError:
             return hex_color
         ExecutionLogFooter = None
         create_execution_log_footer = None
+        get_log_manager = lambda: None
+
+from tools.templates import PathConfigMixin
 
 
 class ScanAndExtractWorker(QObject):
@@ -1006,23 +1009,49 @@ class ScanAndExtractWorker(QObject):
 
 
 
-class LookerStudioExtractorTool(QDialog):
-    """Looker Studio Data Extractor with Glass Morphism UI"""
-    
-    def __init__(self, parent, input_path: str, output_path: str):
+class LookerStudioExtractorTool(PathConfigMixin, QDialog):
+    """Main dialog for the Looker Studio extractor tool."""
+
+    PATH_CONFIG = {
+        "show_input": False,
+        "show_output": True,
+        "include_open_buttons": True,
+        "output_label": "📤 Output Folder:",
+    }
+
+    def __init__(self, parent=None, input_path: str | None = None, output_path: str | None = None):
         super().__init__(parent)
-        
-        self.input_path = input_path
-        self.output_path = output_path
+
+        self.path_manager = get_path_manager()
+        self._path_listener_registered = False
+
+        resolved_input = Path(input_path).expanduser().resolve() if input_path else self.path_manager.get_input_path()
+        resolved_output = Path(output_path).expanduser().resolve() if output_path else self.path_manager.get_output_path()
+
+        self.input_path = resolved_input
+        self.output_path = resolved_output
         self.is_extracting = False
         self.is_scanning = False
         self.found_tables = []
-        
+
+        if input_path:
+            self.path_manager.set_input_path(resolved_input)
+        if output_path:
+            self.path_manager.set_output_path(resolved_output)
+
         # Unified worker (handles both scan and extraction in ONE thread!)
         self.worker = None
         self.worker_thread = None
         self.execution_log_messages = []  # Local storage for log messages (renamed to avoid conflict with widget)
-        
+
+        self.log_manager = None
+        self.log_category = f"TOOL:{self.__class__.__name__}"
+        try:
+            if callable(get_log_manager):
+                self.log_manager = get_log_manager()
+        except Exception:
+            self.log_manager = None
+
         # Get theme - Inherit from parent (main GUI) using NEW system! ✨
         self.current_theme = None
         if THEME_AVAILABLE:
@@ -1045,7 +1074,18 @@ class LookerStudioExtractorTool(QDialog):
         
         # Apply theme after getting correct theme from parent
         self.apply_theme()
-        
+
+        self.path_manager.register_listener(self._handle_paths_changed)
+        self._path_listener_registered = True
+        self._handle_paths_changed(
+            self.path_manager.get_input_path(),
+            self.path_manager.get_output_path()
+        )
+        self._sync_path_edits(
+            Path(self.input_path),
+            Path(self.output_path)
+        )
+
         # Initial log
         self.log("Tool initialized! Ready to extract from Looker Studio!")
         self.log("[WORKFLOW]:")
@@ -1098,6 +1138,17 @@ class LookerStudioExtractorTool(QDialog):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(15)
         
+        # Path Section
+        self.build_path_controls(
+            content_layout,
+            show_input=False,
+            show_output=True,
+            include_open_buttons=True,
+            output_label="📤 Output Folder:",
+        )
+
+        content_layout.addWidget(path_frame)
+
         # URL Section
         url_frame = QFrame()
         url_frame.setObjectName("glassFrame")
@@ -1114,12 +1165,7 @@ class LookerStudioExtractorTool(QDialog):
         self.url_entry.setObjectName("urlInput")
         self.url_entry.setMinimumHeight(35)
         url_layout.addWidget(self.url_entry)
-        
-        output_label = QLabel(f"📤 Output: {self.output_path}")
-        output_label.setFont(QFont("Arial", 11))
-        output_label.setObjectName("outputLabel")
-        url_layout.addWidget(output_label)
-        
+
         content_layout.addWidget(url_frame)
     
         # Settings Section
@@ -1401,7 +1447,7 @@ class LookerStudioExtractorTool(QDialog):
         # Execution Log Footer - Using the new reusable component! ✨
         try:
             from styles.components.execution_log import create_execution_log_footer
-            self.execution_log = create_execution_log_footer(self, self.output_path)
+            self.execution_log = create_execution_log_footer(self, str(self.output_path))
             content_layout.addWidget(self.execution_log, 1)
             
             # Connect signals for additional functionality
@@ -1432,23 +1478,25 @@ class LookerStudioExtractorTool(QDialog):
         scroll_area.setWidget(content_widget)
         main_layout.addWidget(scroll_area, 1)
     
-    def log(self, message: str):
-        """Log with timestamp"""
-        # Use the new execution log component if available
+    def log(self, message: str, level: str = "INFO"):
+        """Log with timestamp and propagate to unified session log."""
+        if self.log_manager:
+            try:
+                self.log_manager.log_event(self.log_category, message, level)
+            except Exception:
+                pass
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_message = f"[{timestamp}] {message}"
+        self.execution_log_messages.append(formatted_message)
+
+        if self.worker and hasattr(self.worker, "execution_log"):
+            self.worker.execution_log.append(formatted_message)
+
         if hasattr(self, 'execution_log') and hasattr(self.execution_log, 'log'):
             self.execution_log.log(message)
-        else:
-            # Fallback to old logging method
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            formatted_message = f"[{timestamp}] {message}"
-            self.execution_log_messages.append(formatted_message)
-            
-            # Also store in worker if available
-            if self.worker:
-                self.worker.execution_log.append(formatted_message)
-            
-            if hasattr(self, 'log_text'):
-                self.log_text.append(formatted_message)
+        elif hasattr(self, 'log_text'):
+            self.log_text.append(formatted_message)
     
     def set_today(self):
         """Set date range to today only"""
@@ -1493,10 +1541,21 @@ class LookerStudioExtractorTool(QDialog):
         # Clear worker logs too if available
         if self.worker:
             self.worker.execution_log.clear()
+
+        if self.log_manager:
+            try:
+                self.log_manager.log_event(self.log_category, "Execution log cleared by user.", "INFO")
+            except Exception:
+                pass
     
     def on_log_saved(self, file_path: str):
         """Called when execution log is saved"""
         self.show_message("Saved!", f"Log saved to:\n{file_path}", "success")
+        if self.log_manager:
+            try:
+                self.log_manager.log_event(self.log_category, f"Execution log saved to: {file_path}", "INFO")
+            except Exception:
+                pass
     
     # Legacy methods for backward compatibility (will be removed in future)
     def copy_log(self):
@@ -1699,22 +1758,23 @@ class LookerStudioExtractorTool(QDialog):
         
         self.show_message("Extraction Failed", f"Error: {error_msg}", "error")
     
-    def open_output_folder(self):
-        """Open output folder"""
-        try:
-            os.startfile(self.output_path)
-        except Exception as e:
-            self.show_message("Error", f"Could not open folder:\n{str(e)}", "error")
-    
     def closeEvent(self, event):
         """Cleanup on close"""
+        if self._path_listener_registered:
+            try:
+                self.path_manager.unregister_listener(self._handle_paths_changed)
+            except Exception:
+                pass
+            finally:
+                self._path_listener_registered = False
+
         self.log("[INFO] Closing tool - cleaning up browser...")
         if self.worker:
             self.worker.close_browser()
         if self.worker_thread and self.worker_thread.isRunning():
             self.worker_thread.quit()
             self.worker_thread.wait()
-        event.accept()
+        super().closeEvent(event)
     
     def show_message(self, title: str, message: str, msg_type: str = "info"):
         """Show message"""
@@ -1764,6 +1824,13 @@ class LookerStudioExtractorTool(QDialog):
         except Exception as e:
             print(f"⚠️ [THEME] Error refreshing theme: {e}")
 
+    def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
+        self.input_path = input_path
+        self.output_path = output_path
+        self._sync_path_edits(input_path, output_path)
+        if hasattr(self, 'execution_log') and hasattr(self.execution_log, 'set_output_path'):
+            self.execution_log.set_output_path(str(output_path))
+
 
 def main():
     """Test standalone"""
@@ -1779,7 +1846,7 @@ def main():
     tool = LookerStudioExtractorTool(
         parent,
         str(Path.home() / "Documents"),
-        str(Path(__file__).parent.parent.parent / "execution test" / "Output")
+        str(Path(__file__).parent.parent.parent / "execution_test" / "Output")
     )
     
     tool.show()

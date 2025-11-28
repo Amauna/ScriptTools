@@ -3,32 +3,34 @@
 Analyzes each CSV file individually and provides detailed metrics per file
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 import traceback
 import csv
 
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QTextEdit, QProgressBar, QFileDialog, QLineEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QScrollArea, QWidget, QMessageBox, QFrame
+    QApplication, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLabel, QTextEdit, QProgressBar, QScrollArea, QWidget, QMessageBox, QFrame,
+    QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QFont
 
+from tools.templates import BaseToolDialog, PathConfigMixin
+
 # Import NEW theme system ✨
 try:
-    from styles import ThemeLoader, get_theme_manager
     from styles.components import ExecutionLogFooter, create_execution_log_footer
     THEME_AVAILABLE = True
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     try:
-        from styles import ThemeLoader, get_theme_manager
         from styles.components import ExecutionLogFooter, create_execution_log_footer
         THEME_AVAILABLE = True
     except ImportError:
@@ -917,49 +919,37 @@ class _OLD_WEBSITE_GROUPING_METHODS:
         self.should_stop = True
 
 
-class DataSummaryTool(QDialog):
+class DataSummaryTool(PathConfigMixin, BaseToolDialog):
     """Per-File CSV Analysis Tool with Modern UI"""
-    
+
+    PATH_CONFIG = {
+        "show_input": True,
+        "show_output": False,
+        "include_open_buttons": True,
+        "input_label": "📥 Input Folder (CSV Files):",
+    }
+
     def __init__(self, parent=None, input_path: str = None, output_path: str = None):
-        super().__init__(parent)
-        
-        self.input_path = Path(input_path) if input_path else Path.cwd()
-        self.output_path = Path(output_path) if output_path else Path.cwd()
+        super().__init__(parent, input_path, output_path)
+
         self.is_analyzing = False
-        self.worker = None
-        self.worker_thread = None
-        self.execution_log_messages = []
+        self.worker: Optional[DataSummaryWorker] = None
+        self.worker_thread: Optional[QThread] = None
+        self.execution_log_messages: List[str] = []
         self.current_files_summary = None
         self.current_grand_totals = None
-        
-        # Get theme - Inherit from parent using NEW system! ✨
-        self.current_theme = None
-        if THEME_AVAILABLE:
-            if hasattr(parent, 'current_theme') and parent.current_theme:
-                self.current_theme = parent.current_theme
-                safe_theme_name = self.current_theme.theme_name.encode('ascii', 'ignore').decode('ascii')
-                print(f"✅ [THEME] Inherited from parent: {safe_theme_name}")
-            else:
-                theme_manager = get_theme_manager()
-                themes = theme_manager.get_available_themes()
-                if themes:
-                    self.current_theme = theme_manager.load_theme(themes[0])
-                    print(f"✅ [THEME] Loaded default: {themes[0]}")
-        
-        # Setup UI
+
         self.setup_window()
         self.setup_ui()
-        if THEME_AVAILABLE and self.current_theme:
-            self.apply_theme()
-        
-        # Initial log
+        self.apply_theme()
+
         self.log("📊 Per-File CSV Analysis Tool initialized! 🌊")
         self.log("📌 WORKFLOW:")
         self.log("  1. Select Input folder → Scan CSV files")
         self.log("  2. Analyze each file individually")
         self.log("  3. View per-file metrics and grand totals")
         self.log("")
-    
+
     def setup_window(self):
         """Setup window"""
         self.setWindowTitle("📊 Per-File CSV Analysis")
@@ -1001,24 +991,14 @@ class DataSummaryTool(QDialog):
         subtitle.setObjectName("infoLabel")
         main_layout.addWidget(subtitle)
         
-        # Input folder section
-        input_layout = QVBoxLayout()
-        input_label = QLabel("📂 Input Folder (CSV Files):")
-        input_label.setFont(QFont("Arial", 10, QFont.Bold))
-        input_layout.addWidget(input_label)
-        
-        input_folder_layout = QHBoxLayout()
-        self.input_entry = QLineEdit(str(self.input_path))
-        self.input_entry.setReadOnly(True)
-        input_folder_layout.addWidget(self.input_entry)
-        
-        input_btn = QPushButton("📁 Browse")
-        input_btn.clicked.connect(self.select_input_folder)
-        input_btn.setFixedWidth(100)
-        input_folder_layout.addWidget(input_btn)
-        
-        input_layout.addLayout(input_folder_layout)
-        main_layout.addLayout(input_layout)
+        # Path controls (input only)
+        self.build_path_controls(
+            main_layout,
+            show_input=True,
+            show_output=False,
+            include_open_buttons=True,
+            input_label="📥 Input Folder (CSV Files):",
+        )
         
         # Analyze button
         self.analyze_btn = QPushButton("🔍 Analyze Files")
@@ -1035,17 +1015,8 @@ class DataSummaryTool(QDialog):
         self._create_results_section(main_layout)
         
         # Execution Log Footer ✨
-        try:
-            from styles.components.execution_log import create_execution_log_footer
-            self.execution_log = create_execution_log_footer(self, self.output_path)
-            main_layout.addWidget(self.execution_log, 1)
-            
-            # Connect signals
-            self.execution_log.log_cleared.connect(self.on_log_cleared)
-            self.execution_log.log_saved.connect(self.on_log_saved)
-            
-        except ImportError:
-            # Fallback
+        log_widget = self.create_execution_log(main_layout)
+        if not log_widget:
             log_label = QLabel("📋 Execution Log:")
             log_label.setFont(QFont("Arial", 10, QFont.Bold))
             main_layout.addWidget(log_label)
@@ -1077,7 +1048,7 @@ class DataSummaryTool(QDialog):
         stats_layout = QHBoxLayout(self.stats_frame)
         
         # Stats labels
-        self.total_websites_label = QLabel("Websites: 0")
+        self.total_websites_label = QLabel("Files: 0")
         self.total_websites_label.setFont(QFont("Arial", 11))
         self.total_websites_label.setObjectName("infoLabel")
         stats_layout.addWidget(self.total_websites_label)
@@ -1148,29 +1119,17 @@ class DataSummaryTool(QDialog):
         except Exception as e:
             print(f"⚠️ [THEME] Error refreshing theme: {e}")
     
-    def select_input_folder(self):
-        """Select input folder"""
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Select Input Folder with CSV Files",
-            str(self.input_path)
-        )
-        
-        if folder:
-            self.input_path = Path(folder)
-            self.input_entry.setText(str(self.input_path))
-            self.log(f"📂 Input folder selected: {self.input_path}")
-    
-    def log(self, message: str):
-        """Add log message"""
+    def log(self, message: str, level: str = "INFO"):
+        """Add log message and persist it for exports."""
+        super().log(message, level=level)
+
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted_message = f"[{timestamp}] {message}"
         self.execution_log_messages.append(formatted_message)
-        
-        if hasattr(self, 'execution_log') and hasattr(self.execution_log, 'log'):
-            self.execution_log.log(message)
-        elif hasattr(self, 'log_area'):
-            self.log_area.append(message)
+
+        if not (hasattr(self, 'execution_log') and getattr(self.execution_log, 'log', None)):
+            if hasattr(self, 'log_area'):
+                self.log_area.append(formatted_message)
     
     def analyze_files(self):
         """Start file analysis"""
@@ -1374,13 +1333,13 @@ class DataSummaryTool(QDialog):
     
     def export_to_csv(self):
         """Export current results to CSV"""
-        if not self.current_summary:
+        if not self.current_files_summary:
             return
         
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save CSV File",
-            str(self.output_path / "website_summary.csv"),
+            str(self.output_path / "file_summary.csv"),
             "CSV Files (*.csv)"
         )
         
@@ -1391,7 +1350,7 @@ class DataSummaryTool(QDialog):
     
     def view_details(self):
         """View detailed metrics window"""
-        if not self.current_summary:
+        if not self.current_files_summary:
             return
         
         self.log("👁 Opening detailed view...")
@@ -1419,26 +1378,25 @@ class DataSummaryTool(QDialog):
         table = QTableWidget()
         table.setObjectName("tableWidget")
         
-        sorted_websites = sorted(self.current_summary.keys())
-        ordered_columns = self._get_ordered_columns(self.current_numeric_columns)
+        sorted_files = sorted(self.current_files_summary)
+        ordered_columns = self._get_ordered_columns(self._get_all_metric_columns(self.current_files_summary))
         
-        headers = ['Website Name', 'Date From', 'Date To', 'Rows'] + ordered_columns
+        headers = ['File Name', 'Date Range', 'Rows'] + ordered_columns
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
-        table.setRowCount(len(sorted_websites))
+        table.setRowCount(len(sorted_files))
         
-        for row_idx, website in enumerate(sorted_websites):
-            data = self.current_summary[website]
+        for row_idx, file_info in enumerate(sorted_files):
+            data = self.current_files_summary[file_info]
             
-            table.setItem(row_idx, 0, QTableWidgetItem(website))
-            table.setItem(row_idx, 1, QTableWidgetItem(data.get('min_date', 'N/A')))
-            table.setItem(row_idx, 2, QTableWidgetItem(data.get('max_date', 'N/A')))
-            table.setItem(row_idx, 3, QTableWidgetItem(f"{data['row_count']:,}"))
+            table.setItem(row_idx, 0, QTableWidgetItem(file_info))
+            table.setItem(row_idx, 1, QTableWidgetItem(data.get('date_range', 'N/A')))
+            table.setItem(row_idx, 2, QTableWidgetItem(f"{data['total_rows']:,}"))
             
             for col_idx, col in enumerate(ordered_columns):
                 value = data.get(col, 0)
                 formatted_value = self._format_value(col, value)
-                table.setItem(row_idx, 4 + col_idx, QTableWidgetItem(formatted_value))
+                table.setItem(row_idx, 3 + col_idx, QTableWidgetItem(formatted_value))
         
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -1450,6 +1408,13 @@ class DataSummaryTool(QDialog):
             self.current_theme.apply_to_window(dialog)
         
         return dialog
+    
+    def _get_all_metric_columns(self, files_summary: List[Dict]) -> List[str]:
+        """Extract all unique metric column names from the per-file summary."""
+        all_columns = set()
+        for file_info in files_summary:
+            all_columns.update(file_info['numeric_columns'])
+        return sorted(list(all_columns))
     
     def on_worker_thread_finished(self):
         """Called when worker thread finishes"""
@@ -1491,29 +1456,29 @@ class DataSummaryTool(QDialog):
                 self.worker_thread.quit()
                 self.worker_thread.wait(3000)
         
-        # Clean up resources
         if self.worker_thread and self.worker_thread.isRunning():
             self.worker_thread.quit()
             self.worker_thread.wait(1000)
         
-        event.accept()
+        super().closeEvent(event)
     
-    def on_log_cleared(self):
-        """Handle log cleared signal"""
-        self.log("📋 Execution log cleared")
-    
-    def on_log_saved(self, filepath: str):
-        """Handle log saved signal"""
-        self.log(f"💾 Execution log saved to: {filepath}")
+    def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
+        """Sync UI when shared paths change."""
+        super()._handle_paths_changed(input_path, output_path)
+        self._sync_path_edits(input_path, output_path)
+        if hasattr(self, 'execution_log') and hasattr(self.execution_log, 'set_output_path'):
+            self.execution_log.set_output_path(str(output_path))
 
 
 def main():
     """Main entry point"""
     app = QApplication(sys.argv)
     
-    # Use current directory as default
-    input_path = str(Path.cwd())
-    output_path = str(Path.cwd())
+    from styles import get_path_manager
+
+    path_manager = get_path_manager()
+    input_path = str(path_manager.get_input_path())
+    output_path = str(path_manager.get_output_path())
     
     tool = DataSummaryTool(None, input_path, output_path)
     tool.show()

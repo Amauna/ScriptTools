@@ -13,6 +13,8 @@ from .color_utils import (
     adjust_opacity,
     get_contrast_text_color
 )
+from .path_manager import get_path_manager, PathManager
+from .log_manager import get_log_manager, LogManager
 
 __all__ = [
     'hex_to_rgb',
@@ -20,6 +22,10 @@ __all__ = [
     'lighten_color',
     'darken_color',
     'adjust_opacity',
-    'get_contrast_text_color'
+    'get_contrast_text_color',
+    'get_path_manager',
+    'PathManager',
+    'get_log_manager',
+    'LogManager'
 ]
 

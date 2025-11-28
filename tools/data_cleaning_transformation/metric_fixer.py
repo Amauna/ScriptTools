@@ -13,15 +13,15 @@ from collections import defaultdict
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFileDialog, QTextEdit, QCheckBox, QTableWidget,
+    QPushButton, QTextEdit, QCheckBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QScrollArea, QWidget, QFrame,
-    QMessageBox, QProgressBar, QGroupBox, QSplitter, QLineEdit
+    QMessageBox, QProgressBar, QGroupBox, QSplitter
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QFont, QColor
 
 # Import base template for automatic theme support
-from tools.templates.base_tool_template import BaseToolDialog
+from tools.templates import BaseToolDialog, PathConfigMixin
 
 
 class MetricAnalysisResult:
@@ -354,11 +354,16 @@ class MetricFixerWorker(QObject):
         self.fix_complete_signal.emit(success, failed)
 
 
-class MetricFixerTool(BaseToolDialog):
-    """
-    🌊 Metric Field Fixer Tool
-    Fix blank/empty/null values in numeric/metric columns
-    """
+class MetricFixerTool(PathConfigMixin, BaseToolDialog):
+    """Tool for fixing metric naming inconsistencies."""
+
+    PATH_CONFIG = {
+        "show_input": True,
+        "show_output": True,
+        "include_open_buttons": True,
+        "input_label": "📥 Input Folder:",
+        "output_label": "📤 Output Folder:",
+    }
     
     def __init__(self, parent, input_path: str, output_path: str):
         """Initialize the metric fixer tool"""
@@ -384,8 +389,8 @@ class MetricFixerTool(BaseToolDialog):
         
         # Initial log
         if self.execution_log:
-            self.execution_log.log("🌊 Metric Field Fixer initialized!")
-            self.execution_log.log("Ready to scan and fix metric fields!")
+            self.log("🌊 Metric Field Fixer initialized!")
+            self.log("Ready to scan and fix metric fields!")
     
     def setup_ui(self):
         """Create the tool's user interface"""
@@ -399,27 +404,12 @@ class MetricFixerTool(BaseToolDialog):
         header_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(header_label)
         
-        # ===== INPUT SECTION =====
-        input_frame = QFrame()
-        input_layout = QHBoxLayout(input_frame)
-        input_layout.setContentsMargins(10, 10, 10, 10)
-        
-        input_label = QLabel("📂 Input Folder:")
-        input_label.setFont(QFont("Arial", 11, QFont.Bold))
-        input_label.setFixedWidth(120)
-        
-        self.input_edit = QLineEdit(str(self.input_path))
-        self.input_edit.setReadOnly(True)
-        
-        browse_btn = QPushButton("📂 Browse")
-        browse_btn.clicked.connect(self.browse_input)
-        browse_btn.setFixedWidth(100)
-        
-        input_layout.addWidget(input_label)
-        input_layout.addWidget(self.input_edit)
-        input_layout.addWidget(browse_btn)
-        
-        main_layout.addWidget(input_frame)
+        self.build_path_controls(
+            main_layout,
+            show_input=True,
+            show_output=True,
+            include_open_buttons=True,
+        )
         
         # ===== ACTION BUTTONS =====
         action_frame = QFrame()
@@ -513,20 +503,6 @@ class MetricFixerTool(BaseToolDialog):
         # ===== EXECUTION LOG =====
         self.execution_log = self.create_execution_log(main_layout)
     
-    def browse_input(self):
-        """Browse for input folder"""
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Select Input Folder",
-            str(self.input_path)
-        )
-        
-        if folder:
-            self.input_path = Path(folder)
-            self.input_edit.setText(str(self.input_path))
-            if self.execution_log:
-                self.execution_log.log(f"📂 Input folder: {self.input_path}")
-    
     def start_scan(self):
         """Start scanning CSV files"""
         if self.is_scanning or self.is_fixing:
@@ -573,7 +549,7 @@ class MetricFixerTool(BaseToolDialog):
         self.worker_thread.start()
         
         if self.execution_log:
-            self.execution_log.log(f"🔍 Scanning {len(csv_files)} CSV file(s)...")
+            self.log(f"🔍 Scanning {len(csv_files)} CSV file(s)...")
     
     def _on_scan_progress(self, current: int, total: int):
         """Update scan progress"""
@@ -592,7 +568,7 @@ class MetricFixerTool(BaseToolDialog):
         
         if self.execution_log:
             total_issues = sum(r.issue_count for r in results)
-            self.execution_log.log(f"✅ Scan complete! Found {total_issues} issue(s) to fix")
+            self.log(f"✅ Scan complete! Found {total_issues} issue(s) to fix")
         
         # Enable selection if we have results
         if results:
@@ -820,7 +796,7 @@ class MetricFixerTool(BaseToolDialog):
             
         except Exception as e:
             if self.execution_log:
-                self.execution_log.log(f"⚠️ Error updating preview: {e}")
+                self.log(f"⚠️ Error updating preview: {e}")
     
     def start_fix(self):
         """Start fixing selected metric fields"""
@@ -876,7 +852,7 @@ class MetricFixerTool(BaseToolDialog):
         self.worker_thread.start()
         
         if self.execution_log:
-            self.execution_log.log("🔧 Starting to fix metric fields...")
+            self.log("🔧 Starting to fix metric fields...")
     
     def _on_fix_progress(self, current: int, total: int):
         """Update fix progress"""
@@ -890,7 +866,7 @@ class MetricFixerTool(BaseToolDialog):
         self.progress.setVisible(False)
         
         if self.execution_log:
-            self.execution_log.log(f"✅ Fix complete! Success: {success}, Failed: {failed}")
+            self.log(f"✅ Fix complete! Success: {success}, Failed: {failed}")
         
         QMessageBox.information(
             self,
@@ -901,7 +877,7 @@ class MetricFixerTool(BaseToolDialog):
     def _log(self, message: str):
         """Log message to execution log"""
         if self.execution_log:
-            self.execution_log.log(message)
+            self.log(message)
     
     def closeEvent(self, event):
         """Handle window close"""
@@ -911,7 +887,6 @@ class MetricFixerTool(BaseToolDialog):
             self.worker_thread.wait(3000)
         
         event.accept()
-
 
 # Alias for main.py compatibility
 MetricFixer = MetricFixerTool
@@ -937,10 +912,12 @@ def main():
     parent = DummyParent()
     
     # Create tool
+    from styles import get_path_manager
+    path_manager = get_path_manager()
     tool = MetricFixerTool(
         parent,
-        str(Path.home() / "Documents"),
-        str(Path.cwd() / "Output")
+        str(path_manager.get_input_path()),
+        str(path_manager.get_output_path())
     )
     
     tool.show()

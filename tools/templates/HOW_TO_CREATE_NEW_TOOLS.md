@@ -73,8 +73,8 @@ def do_your_action(self):
     
     # Log messages
     if self.execution_log:
-        self.execution_log.log("Processing data...")
-        self.execution_log.log("✅ Done!")
+        self.log("Processing data...")
+        self.log("✅ Done!")
 ```
 
 ### **Step 6: Done!** 🎉
@@ -135,7 +135,7 @@ class QuickTool(BaseToolDialog):
         self.execution_log = self.create_execution_log(layout)
     
     def on_click(self):
-        self.execution_log.log("Button clicked! ✨")
+        self.log("Button clicked! ✨")
 ```
 
 **That's it! 30 lines and you have a fully themed tool!** 🎉

@@ -40,7 +40,11 @@ from .utils import (
     lighten_color,
     darken_color,
     adjust_opacity,
-    get_contrast_text_color
+    get_contrast_text_color,
+    get_path_manager,
+    PathManager,
+    get_log_manager,
+    LogManager
 )
 
 # Animations
@@ -81,6 +85,10 @@ __all__ = [
     'darken_color',
     'adjust_opacity',
     'get_contrast_text_color',
+    'get_path_manager',
+    'PathManager',
+    'get_log_manager',
+    'LogManager',
     # Animations
     'FadeAnimation',
     'SlideAnimation',

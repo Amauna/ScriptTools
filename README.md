@@ -45,7 +45,8 @@ GA4 Script Tools/
 │   ├── file_management_organization/
 │   └── ... (more categories)
 ├── gui_logs/                        # Session execution logs
-└── execution test/
+└── execution_test/
+    └── Output/
     └── Output/                      # Tool outputs
 ```
 
@@ -66,6 +67,46 @@ GA4 Script Tools/
 ### File Management
 - Organize and manage files
 
+## 🧰 Tool Feature Matrix
+
+### 📥 Data Collection & Import
+- **`looker_extractor.py` — Looker Studio Extractor**
+  - 🌐 Playwright-driven browser automation (Chromium, Firefox, WebKit) with headless toggle and graceful credential prompts.
+  - 🔍 Table discovery wizard scans Looker Studio pages, previews columns, and lets analysts cherry-pick targets before export.
+  - 💾 Streams multiple CSV downloads into timestamped folders, rotates outputs automatically, and persists run summaries in the execution log footer.
+  - ⚙️ Runs extraction flows on background threads while syncing the shared `PathManager` output path to keep the UI responsive.
+
+### 🧼 Data Cleaning & Transformation
+- **`column_order_harmonizer.py` — Column Order Harmonizer**
+  - 📁 Scans the input folder for CSVs, displaying column counts and status per file at a glance.
+  - 🧭 Applies curated presets (or custom sequences) to reorder headers, strip duplicates, and append any remaining columns intelligently.
+  - 🔄 Executes harmonization in a QThread worker with live progress, status updates, and execution log streaming.
+  - ✍️ Saves reordered datasets to mirrored output folders so originals stay untouched.
+- **`find_replace.py` — BigQuery CSV Cleaner**
+  - 🔎 Analyzes CSV structure, detecting numeric columns, null/empty hot spots, and BigQuery-incompatible values.
+  - 🧼 Applies configurable cleaning (null handling, empty-string normalisation) alongside targeted find/replace operations.
+  - 🖥️ Offers side-by-side file selection, preview statistics, and a rich log panel with copy/save shortcuts.
+  - 🚀 Processes batches on a background thread, writing detailed execution logs and summaries into the output directory.
+- **`metric_fixer.py` — Metric Field Fixer**
+  - 📊 Scans GA4 exports to detect metric columns with inconsistent blanks, “null” strings, or mis-scaled percentage values.
+  - ✅ Lets analysts review findings per file, choose exactly which columns to repair, and preview replacements before committing.
+  - 🔧 Generates cleaned CSVs via background workers, with live progress bars, granular logging, and success/failure counts.
+  - 🛡️ Preserves originals by writing fixed files to dedicated output folders and documenting every change in the execution log.
+
+### 📊 Data Analysis & Reporting
+- **`data_summary.py` — Data Summary Tool**
+  - 📈 Performs per-file exploratory summaries, auto-detecting metrics such as totals, engagement rates, and user counts.
+  - 🪟 Presents interactive tables, grand totals, and metric cards inside a scrollable “glass” dashboard.
+  - 🔁 Runs analysis in background threads with progress tracking, cancellation safety, and PathManager-powered input sync.
+  - 💾 Exports summary tables to CSV and logs each run in the Execution Log footer for auditability.
+
+### 📁 File Management & Organization
+- **`file_rename.py` — File Renamer Tool**
+  - 🔍 Scans folders, previews file lists, and supports multi-select with “Select All/None” shortcuts.
+  - ✏️ Applies prefix/suffix patterns with live previews so renaming rules stay predictable.
+  - ♻️ Generates output copies instead of destructive renames, anchoring paths through the shared PathManager.
+  - 📓 Captures every action in the execution log with reset/copy/save utilities for repeatable workflows.
+
 ## 🎨 Theme System
 
 The application includes 10 gorgeous themes:
@@ -85,17 +126,17 @@ Switch themes from the dropdown in the main GUI - all tools inherit the theme!
 
 ## 📝 Logging System
 
-All executions are logged to `gui_logs/`:
+All executions are logged to `gui_logs/` via the unified `LogManager`:
 
-- **GUI logs:** `gui_execution_log_YYYYMMDD_HHMMSS.txt`
-- **Tool-specific logs:** `looker_studio_session_*.txt`
-- **Output logs:** Inside each output folder
+- **Session logs:** `gui_session_log_YYYYMMDD_HHMMSSA.txt` (entire GUI run, sequence letter resets daily)
+- **Tool session logs:** `looker_studio_session_*.txt`, `file_summary_session_*.txt`, etc.
+- **Output artifacts:** `execution_log.txt` (inside each run folder under `execution_test/Output`)
 
 ### Log Features
-- Real-time updates in tool UI
-- Copy/Reset/Save buttons
-- Searchable session logs
-- Error tracking with context
+- Real-time updates in every tool footer (Copy / Reset / Save remain local-only)
+- Resetting a footer never erases the session log — the unified log is append-only
+- Searchable, timestamped records for workflows, theme switches, and path changes
+- Error tracking with context for rapid diagnosis
 
 ## 🎯 Usage Examples
 
@@ -112,29 +153,34 @@ All executions are logged to `gui_logs/`:
 
 ### Adding New Tools
 
-Create a tool that follows this structure:
+Start from the template so you inherit theme + logging automatically:
 
 ```python
-from PySide6.QtWidgets import QDialog
-from styles import get_theme_manager
+from PySide6.QtWidgets import QVBoxLayout, QLabel
 
-class MyTool(QDialog):
-    def __init__(self, parent, input_path, output_path):
-        super().__init__(parent)
-        self.current_theme = parent.current_theme  # Inherit theme
+from tools.templates import BaseToolDialog, PathConfigMixin
+
+
+class MyTool(PathConfigMixin, BaseToolDialog):
+    PATH_CONFIG = {"show_input": True, "show_output": True}
+
+    def __init__(self, parent, input_path: str, output_path: str):
+        super().__init__(parent, input_path, output_path)
+        self.setup_window_properties("✨ My Tool")
         self.setup_ui()
         self.apply_theme()
-    
+
     def setup_ui(self):
-        # Build your UI here
-        pass
-    
-    def apply_theme(self):
-        if self.current_theme:
-            self.current_theme.apply_to_window(self)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Your UI goes here!"))
+
+        # Use the shared execution log
+        self.execution_log = self.create_execution_log(layout)
+        if self.execution_log:
+            self.log("Tool initialized! 🌊")
 ```
 
-Then register it in `main.py`'s `launch_tool()` method.
+Then add the tool to the registry in `main.py`.
 
 ## 📚 Requirements
 
