@@ -37,6 +37,7 @@ GA4 Script Tools/
 │   ├── themes/                      # 10 JSON theme files
 │   ├── components/                  # Reusable UI components
 │   └── animations/                  # Qt animations
+├── styles/utils/path_manager.py     # Centralised input/output routing (switch-case controlled)
 ├── tools/                           # All tools organized by category
 │   ├── data_collection_import/
 │   │   └── looker_extractor.py        ✅ Implemented
@@ -46,9 +47,34 @@ GA4 Script Tools/
 │   └── ... (more categories)
 ├── gui_logs/                        # Session execution logs
 └── execution_test/
-    └── Output/
-    └── Output/                      # Tool outputs
+    └── Output/                      # Tool outputs (per-tool/script/timestamp folders)
 ```
+
+### Output Directory Layout (auto-managed)
+
+```
+execution_test/Output/
+├── Looker_Extractor/
+│   └── looker_extractor_py/
+│       └── 2025-11-12_0814/
+│           ├── exported_table_1.csv
+│           └── logs/
+├── Column_Order_Harmonizer/
+│   └── 2025-11-13_1137/
+│       ├── Success/
+│       ├── Failed/
+│       └── _harmonization_report.txt
+├── Metric_Fixer/
+│   └── metric_fixer_py/
+│       └── 2025-11-12_0820/
+├── Date_Format_Converter/
+│   └── 2025-11-13_1201/
+│       ├── Converted/
+│       └── _date_conversion_report.csv
+└── ...
+```
+
+All timestamps and subfolders are produced by `PathManager.prepare_tool_output(...)`; individual tools never manually compose paths. When inheriting `BaseToolDialog`, prefer the helper `self.allocate_run_directory(...)` to keep UI paths in sync automatically. PathManager normalises any lingering tool/timestamp suffixes from previous runs before minting a new directory, keeping the tree flat and predictable.
 
 ## 🎨 Available Tools
 
@@ -80,8 +106,9 @@ GA4 Script Tools/
 - **`column_order_harmonizer.py` — Column Order Harmonizer**
   - 📁 Scans the input folder for CSVs, displaying column counts and status per file at a glance.
   - 🧭 Applies curated presets (or custom sequences) to reorder headers, strip duplicates, and append any remaining columns intelligently.
+  - 🧱 Guarantees canonical GA4 ordering (and fills missing columns with blanks) before anything hits diagnostics or BigQuery.
   - 🔄 Executes harmonization in a QThread worker with live progress, status updates, and execution log streaming.
-  - ✍️ Saves reordered datasets to mirrored output folders so originals stay untouched.
+  - ✍️ Writes harmonised datasets into timestamped `Success/` folders, moves rejects to `Failed/`, and emits a `_harmonization_report.txt` with precise failure reasons.
 - **`find_replace.py` — BigQuery CSV Cleaner**
   - 🔎 Analyzes CSV structure, detecting numeric columns, null/empty hot spots, and BigQuery-incompatible values.
   - 🧼 Applies configurable cleaning (null handling, empty-string normalisation) alongside targeted find/replace operations.
@@ -92,6 +119,57 @@ GA4 Script Tools/
   - ✅ Lets analysts review findings per file, choose exactly which columns to repair, and preview replacements before committing.
   - 🔧 Generates cleaned CSVs via background workers, with live progress bars, granular logging, and success/failure counts.
   - 🛡️ Preserves originals by writing fixed files to dedicated output folders and documenting every change in the execution log.
+- **`date_format_converter.py` — Date Format Converter**
+  - 🗓️ Normalises date columns across batches of CSVs using analyst-specified input/output format rules.
+  - 🧮 Tracks parsed vs inferred vs fallback conversions per column and writes a `_date_conversion_report.csv` for auditing.
+  - 🚀 Streams work on a background thread, saving rewritten files into a `Converted/` subfolder inside each timestamped run directory.
+- **`metric_fixer_batch.py` — Metric Field Fixer (Batch CLI)**
+  - ⚡ Schema-driven CLI that enforces GA4 metric types across entire folders without opening the GUI.
+  - 🧠 Canonicalises header aliases (e.g. “Event name”, `event_name`) and normalises integers, engagement percentages, and two-decimal revenue values.
+  - 🧾 Emits clean CSV (and optional Parquet) plus a JSONL manifest with per-file coercion stats for auditing or GUI inspection.
+  - 🔁 Supports `--resume`, worker throttling, dry runs, and schema overrides via `schemas/metric_schema_v1.yaml`.
+
+#### Metric Fixer Batch CLI — Quick Start
+
+Run from an activated virtual environment (Python 3.12+):
+
+```powershell
+# Smoke test (reads files, no writes)
+python tools\data_cleaning_transformation\metric_fixer_batch.py `
+    --input  "C:\path\to\raw_csv" `
+    --output "C:\path\to\clean_outputs" `
+    --schema "schemas\metric_schema_v1.yaml" `
+    --dry-run --limit 5 --workers 1 --no-parquet
+
+# Full batch run
+python tools\data_cleaning_transformation\metric_fixer_batch.py `
+    --input  "C:\path\to\raw_csv" `
+    --output "C:\path\to\clean_outputs" `
+    --schema "schemas\metric_schema_v1.yaml" `
+    --workers 2
+```
+
+- Clean CSVs land in `<output>/clean_csv/`. Enable Parquet by omitting `--no-parquet`.
+- Every run writes a log to `<output>/logs/metric_fixer_batch.log` and a manifest `metric_fixer_manifest_<timestamp>.jsonl`.
+- Use `--resume` to skip files already processed successfully, `--only` to target specific filenames, and tune `--workers` to match machine resources.
+- PyYAML is required when loading the schema (`pip install PyYAML` if it is missing).
+
+### Date Format Converter
+
+- **GUI:** Launch via the suite (`Date Time Utilities → Date Format Converter`) or run `python tools\date_time_utilities\date_format_converter.py`. Scan the folder, adjust input/output formats and fallback mode, then click Convert. The run summary links directly to the manifest and clean output folder.
+- **CLI:**
+  ```powershell
+  python tools\data_cleaning_transformation\date_format_converter_batch.py `
+      --input  "C:\path\to\raw_csv" `
+      --output "C:\path\to\clean_outputs" `
+      --input-format "%Y-%m-%d" `
+      --input-format "%m/%d/%Y" `
+      --output-format "%Y-%m-%d" `
+      --fallback original `
+      --keep-original `
+      --workers 2
+  ```
+  - Add `--dry-run` for a safe preview, `--resume` to skip successful files, `--no-parquet` to disable Parquet exports, and `--only` to target specific filenames.
 
 ### 📊 Data Analysis & Reporting
 - **`data_summary.py` — Data Summary Tool**
@@ -106,6 +184,22 @@ GA4 Script Tools/
   - ✏️ Applies prefix/suffix patterns with live previews so renaming rules stay predictable.
   - ♻️ Generates output copies instead of destructive renames, anchoring paths through the shared PathManager.
   - 📓 Captures every action in the execution log with reset/copy/save utilities for repeatable workflows.
+
+### 🕒 Date & Time Utilities
+- **`tools/date_time_utilities/date_format_converter.py` — Date Format Converter (GUI)**
+  - 🧠 Auto-detects date columns across hundreds of CSVs and surfaces format distribution instantly—no manual column picking required.
+  - 🗂️ Clusters files by detected date format; divergent CSVs appear under their own tabs with per-format checkboxes and file-level toggles for surgical selection.
+  - 🎯 Converts non-baseline formats by default; enable the baseline tab (or individual files) with a single click before launching the batch.
+  - 🪄 Streams each file chunk-by-chunk (configurable chunk size) so large datasets stay under memory limits while the UI stays responsive.
+  - ⚡ Respects `workers` to fan out conversion across CPU cores via the shared engine, honouring resume, dry-run, and keep-original options.
+  - 📊 Surfaces live progress (success, skip, failure counts), emits detailed summaries/manifest links, and includes total-byte telemetry for auditing.
+  - 📋 Conversion settings include preset pickers for both input and output formats—toggle a preset and the fields update instantly.
+
+### ✅ Data Validation & Quality
+- **`bigquery_transfer_diagnostics.py` — BigQuery Transfer Diagnostics**
+  - 🛡️ Verifies every CSV against the canonical GA4 schema, flags misordered or missing headers, and highlights numeric cast failures before upload.
+  - 🔍 Reports the exact row/column causing trouble (e.g. decimals in `Engaged sessions`) with a minimalist `diagnostic_report.txt`.
+  - 📊 Supports filterable result tables (pass/warn/fail) and mirrors findings into the execution log for easy auditing.
 
 ## 🎨 Theme System
 
@@ -151,11 +245,33 @@ All executions are logged to `gui_logs/` via the unified `LogManager`:
 
 ## 🛠️ Development
 
-### Adding New Tools
+### Output Path Governance
 
-Start from the template so you inherit theme + logging automatically:
+Every tool that writes files **must** obtain its run directory through the central `PathManager` switch-case. This guarantees consistent namespaces, script-tagging, and harmonised subfolders (e.g. `Success/Failed` for the harmonizer).
 
 ```python
+from pathlib import Path
+from styles import get_path_manager
+
+info = get_path_manager().prepare_tool_output(
+    "My Tool Name",
+    script_name=Path(__file__).name,
+)
+run_root = info["root"]
+# Optional specialised folders: info.get("success"), info.get("failed"), ...
+```
+
+- **Never** hand-build timestamped folders inside tool code.
+- PathManager automatically strips residual tool/timestamp folders from legacy runs—avoid resetting output paths manually.
+- Always log the chosen `run_root` so downstream automations can find outputs (the helper does this by default).
+- Call `_sync_path_edits(self.input_path, run_root)` (or rely on `allocate_run_directory(..., sync_paths=True)` which handles it) to keep UI fields up to date.
+
+### Adding New Tools
+
+Start from the template so you inherit theme + logging + path governance automatically:
+
+```python
+from pathlib import Path
 from PySide6.QtWidgets import QVBoxLayout, QLabel
 
 from tools.templates import BaseToolDialog, PathConfigMixin
@@ -174,10 +290,13 @@ class MyTool(PathConfigMixin, BaseToolDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Your UI goes here!"))
 
-        # Use the shared execution log
-        self.execution_log = self.create_execution_log(layout)
-        if self.execution_log:
-            self.log("Tool initialized! 🌊")
+        # Obtain a dedicated run directory for this execution
+        info = self.allocate_run_directory(
+            "My Tool Name",
+            script_name=Path(__file__).name,
+        )
+        run_root = info["root"]
+        # Optional specialised folders: info.get("success"), info.get("failed"), ...
 ```
 
 Then add the tool to the registry in `main.py`.

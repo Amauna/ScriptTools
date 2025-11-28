@@ -7,11 +7,16 @@ from __future__ import annotations
 
 import csv
 import os
-from dataclasses import dataclass
+import re
+import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QObject, QThread, Signal
+from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -31,8 +36,17 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import pandas as pd
 
 from tools.templates import BaseToolDialog, PathConfigMixin
+from styles import get_path_manager
+
+
+def _normalize_header_name(value: str) -> str:
+    """Normalize a header name for canonical comparison."""
+    lower = value.strip().lower()
+    replaced = lower.replace("_", " ").replace("-", " ")
+    return " ".join(replaced.split())
 
 
 _DEFAULT_SEQUENCE = [
@@ -61,6 +75,48 @@ _PRESET_DEFINITIONS: Dict[str, List[str]] = {
     "Default (Website Metrics)": _DEFAULT_SEQUENCE,
 }
 
+_COLUMN_SYNONYMS_RAW: Dict[str, str] = {
+    "website_name": "Website Name",
+    "event_name": "Event name",
+    "full_url": "FullURL",
+    "full url": "FullURL",
+    "fullurl": "FullURL",
+    "session_default_channel_grouping": "Session default channel grouping",
+    "session_default_channel_group": "Session default channel grouping",
+    "session_medium": "Session medium",
+    "session_source": "Session source",
+    "session_campaign": "Session campaign",
+    "sessions": "Sessions",
+    "event_count": "Event count",
+    "engaged_sessions": "Engaged sessions",
+    "engagement_rate": "Engagement rate",
+    "views": "Views",
+    "active_users": "Active users",
+    "new_users": "New users",
+    "total_users": "Total users",
+    "total_revenue": "Total revenue",
+}
+
+_CANONICAL_COLUMNS = OrderedDict(
+    (_normalize_header_name(name), name) for name in _DEFAULT_SEQUENCE
+)
+_CANONICAL_LOOKUP: Dict[str, str] = dict(_CANONICAL_COLUMNS)
+_DISPLAY_TO_NORMALIZED: Dict[str, str] = {
+    display: normalized for normalized, display in _CANONICAL_COLUMNS.items()
+}
+for variant, display in _COLUMN_SYNONYMS_RAW.items():
+    canonical_display = display
+    if canonical_display not in _DISPLAY_TO_NORMALIZED:
+        continue
+    variant_normalized = _normalize_header_name(variant)
+    _CANONICAL_LOOKUP[variant_normalized] = canonical_display
+
+_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}_\d{4}(?:_\d{2})?")
+_SANITIZED_TOOL_NAME = re.sub(r"[^A-Za-z0-9]+", "_", "Column Order Harmonizer").strip("_")
+_SANITIZED_SCRIPT_NAME = re.sub(
+    r"[^A-Za-z0-9]+", "_", Path(__file__).name
+).strip("_") or "Script"
+
 
 @dataclass
 class HarmonizerResult:
@@ -68,6 +124,21 @@ class HarmonizerResult:
     failed: int = 0
     duplicates_removed: int = 0
     extras_removed: int = 0
+
+
+@dataclass
+class ColumnCandidateInfo:
+    df_col: str
+    raw_name: str
+    original_index: int
+    canonical_name: Optional[str] = None
+
+
+@dataclass
+class OutputColumnTracker:
+    non_empty_count: int = 0
+    total_rows: int = 0
+    rows_per_chunk: List[int] = field(default_factory=list)
 
 
 class ColumnOrderWorker(QObject):
@@ -83,6 +154,11 @@ class ColumnOrderWorker(QObject):
         remove_extra_columns: bool,
         input_path: Path,
         output_path: Path,
+        output_success_path: Path,
+        output_failed_path: Path,
+        report_root_path: Path,
+        chunksize: int = 100_000,
+        max_workers: int = 8,
     ) -> None:
         super().__init__()
         self.files = files
@@ -90,135 +166,485 @@ class ColumnOrderWorker(QObject):
         self.remove_extra_columns = remove_extra_columns
         self.input_path = input_path
         self.output_path = output_path
+        self.output_success_path = output_success_path
+        self.output_failed_path = output_failed_path
+        self.report_root_path = report_root_path
+        self.chunksize = chunksize
+        self.max_workers = max_workers
+        self._stop = False
+        self.results: List[Dict[str, str]] = []
 
     def run(self) -> None:
-        result = HarmonizerResult()
+        result_success = 0
+        result_failed = 0
         total = len(self.files)
 
-        for index, file_path in enumerate(self.files, start=1):
-            self.progress_signal.emit(index - 1, total)
-            relative_name = file_path.name
-            self.status_signal.emit(f"Processing {relative_name}")
-            self.log_signal.emit(f"🔄 Reordering columns for {relative_name}")
+        self.log_signal.emit(
+            f"🚀 Starting harmonization of {total} file(s) (chunksize={self.chunksize})"
+        )
 
-            try:
-                duplicates_removed, extras_removed = self._process_file(file_path)
-            except Exception as exc:  # pragma: no cover - runtime safety
-                result.failed += 1
-                self.log_signal.emit(
-                    f"❌ Failed to process {relative_name}: {exc}"
+        workers = min(self.max_workers, max(1, total))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {
+                ex.submit(self._process_file, file_path): file_path for file_path in self.files
+            }
+            completed = 0
+            for fut in as_completed(futures):
+                if self._stop:
+                    break
+                file_path = futures[fut]
+                completed += 1
+                try:
+                    success, reason = fut.result()
+                    if success:
+                        result_success += 1
+                        self.log_signal.emit(f"✅ Column order updated for {file_path.name}")
+                        self.results.append({"file": file_path.name, "status": "success", "reason": ""})
+                    else:
+                        result_failed += 1
+                        self.results.append({"file": file_path.name, "status": "failed", "reason": reason or "Unknown failure"})
+                except Exception as exc:
+                    result_failed += 1
+                    message = f"❌ Failed to process {file_path.name}: {exc}"
+                    self.log_signal.emit(message)
+                    self.results.append({"file": file_path.name, "status": "failed", "reason": str(exc)})
+
+                self.progress_signal.emit(completed, total)
+                self.status_signal.emit(f"Processed {completed}/{total}: {file_path.name}")
+
+        self._write_report()
+        self.finished_signal.emit(result_success, result_failed)
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def _copy_to_failed(self, file_path: Path) -> None:
+        if self.output_failed_path is None:
+            return
+        try:
+            self.output_failed_path.mkdir(parents=True, exist_ok=True)
+            target = self.output_failed_path / file_path.name
+            shutil.copy2(file_path, target)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_signal.emit(f"⚠️ Unable to copy {file_path.name} to failed folder: {exc}")
+
+    def _normalize_cols(self, cols: List[str]) -> List[str]:
+        return [c.strip() for c in cols]
+
+    def _detect_csv_dialect(self, file_path: Path) -> Tuple[csv.Dialect, str]:
+        """
+        Sniff the CSV dialect for delimiter/quoting preservation. Falls back to csv.excel.
+        Returns the dialect alongside a non-empty line terminator.
+        """
+        default_dialect = csv.excel
+        fallback_lineterminator = "\n"
+        try:
+            with file_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                sample = handle.read(2048)
+                handle.seek(0)
+                if sample.strip():
+                    detected = csv.Sniffer().sniff(sample)
+                else:
+                    detected = default_dialect
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_signal.emit(
+                f"⚠️ Unable to sniff CSV dialect for {file_path.name}. Using defaults. ({exc})"
+            )
+            detected = default_dialect
+
+        line_terminator = getattr(detected, "lineterminator", None) or fallback_lineterminator
+        return detected, line_terminator
+
+    def _process_file(self, file_path: Path) -> Tuple[bool, Optional[str]]:
+        try:
+            dialect, line_terminator = self._detect_csv_dialect(file_path)
+
+            with file_path.open("r", encoding="utf-8-sig", newline="") as fh:
+                reader = csv.reader(fh, dialect=dialect)
+                raw_header = next(reader, [])
+                if not raw_header:
+                    reason = "Empty file"
+                    self.log_signal.emit(f"❌ {reason}: {file_path.name}")
+                    self._copy_to_failed(file_path)
+                    return False, reason
+
+            trimmed_header = [name.strip() for name in raw_header]
+            candidate_map: Dict[str, List[ColumnCandidateInfo]] = {}
+            direct_candidates: Dict[str, List[ColumnCandidateInfo]] = {}
+            extras_by_normalized: Dict[str, List[ColumnCandidateInfo]] = {}
+
+            for idx, raw_name in enumerate(trimmed_header):
+                normalized = _normalize_header_name(raw_name)
+                canonical_display = _CANONICAL_LOOKUP.get(normalized)
+                candidate = ColumnCandidateInfo(
+                    df_col=raw_name,
+                    raw_name=raw_name,
+                    original_index=idx,
+                    canonical_name=canonical_display,
                 )
+                if canonical_display:
+                    candidate_map.setdefault(canonical_display, []).append(candidate)
+                else:
+                    extras_by_normalized.setdefault(normalized, []).append(candidate)
+                direct_candidates.setdefault(raw_name, []).append(candidate)
+
+            missing_columns: List[str] = []
+            ambiguous_columns: List[str] = []
+            selected_ga4: "OrderedDict[str, ColumnCandidateInfo]" = OrderedDict()
+
+            for display_name in self.column_sequence:
+                normalized_expected = _normalize_header_name(display_name)
+                canonical_display = _CANONICAL_LOOKUP.get(normalized_expected)
+
+                if canonical_display:
+                    candidates = candidate_map.get(canonical_display, [])
+                    error_label = canonical_display
+                    target_name = canonical_display
+                else:
+                    candidates = direct_candidates.get(display_name, [])
+                    error_label = display_name
+                    target_name = display_name
+                if not candidates:
+                    missing_columns.append(error_label)
+                    continue
+                if len(candidates) > 1:
+                    ambiguous_columns.append(error_label)
+                    continue
+                selected_candidate = candidates[0]
+                selected_ga4[target_name] = selected_candidate
+                if selected_candidate.canonical_name is None:
+                    normalized_selected = _normalize_header_name(selected_candidate.raw_name)
+                    existing = extras_by_normalized.get(normalized_selected, [])
+                    filtered = [
+                        extra for extra in existing if extra.original_index != selected_candidate.original_index
+                    ]
+                    if filtered:
+                        extras_by_normalized[normalized_selected] = filtered
+                    elif normalized_selected in extras_by_normalized:
+                        extras_by_normalized.pop(normalized_selected)
+
+            if ambiguous_columns:
+                reason = f"Ambiguous columns detected: {', '.join(ambiguous_columns)}"
+                self.log_signal.emit(f"❌ {reason} in {file_path.name}")
+                self._copy_to_failed(file_path)
+                return False, reason
+
+            if missing_columns:
+                reason = f"Missing required columns: {', '.join(missing_columns)}"
+                self.log_signal.emit(f"❌ {reason} in {file_path.name}")
+                self._copy_to_failed(file_path)
+                return False, reason
+
+            extras_preserved: List[ColumnCandidateInfo] = []
+            for norm, candidates in extras_by_normalized.items():
+                if len(candidates) > 1:
+                    names = ", ".join(candidate.raw_name for candidate in candidates)
+                    self.log_signal.emit(
+                        f"⚠️ Duplicate non-contract columns detected ({names}) in {file_path.name}; using first occurrence."
+                    )
+                best_candidate = min(candidates, key=lambda candidate: candidate.original_index)
+                extras_preserved.append(best_candidate)
+
+            extras_preserved.sort(key=lambda candidate: candidate.original_index)
+
+            if self.remove_extra_columns:
+                extras_preserved = []
+
+            ordered_header = list(selected_ga4.keys())
+            extras_map: Dict[str, ColumnCandidateInfo] = {}
+            if extras_preserved:
+                for candidate in extras_preserved:
+                    ordered_header.append(candidate.raw_name)
+                    extras_map[candidate.raw_name] = candidate
+
+            renamed_columns = {
+                display_name: candidate
+                for display_name, candidate in selected_ga4.items()
+                if candidate.df_col != display_name
+            }
+
+            fresh_reader = pd.read_csv(
+                file_path,
+                dtype=str,
+                encoding="utf-8-sig",
+                low_memory=False,
+                sep=dialect.delimiter,
+                quotechar=dialect.quotechar,
+                doublequote=dialect.doublequote,
+                escapechar=dialect.escapechar,
+                quoting=dialect.quoting,
+                chunksize=self.chunksize,
+                keep_default_na=False,
+            )
+
+            self.output_success_path.mkdir(parents=True, exist_ok=True)
+            output_file = self.output_success_path / file_path.name
+            if output_file.exists():
+                output_file.unlink()
+
+            header_written = False
+            wrote_any = False
+            output_trackers: Dict[str, OutputColumnTracker] = {
+                column_name: OutputColumnTracker() for column_name in ordered_header
+            }
+            total_rows_processed = 0
+            chunk_index = 0
+
+            self.log_signal.emit(f"📄 File: {file_path.name}")
+            if renamed_columns:
+                for display_name, candidate in renamed_columns.items():
+                    self.log_signal.emit(
+                        f"   └─ Renamed column '{candidate.df_col}' → '{display_name}'"
+                    )
+
+            for chunk in fresh_reader:
+                chunk.columns = self._normalize_cols(list(chunk.columns))
+                row_count = len(chunk.index)
+                if row_count == 0:
+                    continue
+
+                output_columns: Dict[str, pd.Series] = {}
+                for display_name, candidate in selected_ga4.items():
+                    column_key = candidate.df_col
+                    if column_key in chunk.columns:
+                        series = chunk[column_key].astype(str)
+                    else:
+                        series = pd.Series([""] * row_count, dtype=str)
+                    tracker = output_trackers[display_name]
+                    tracker.total_rows += row_count
+                    tracker.non_empty_count += int(series.str.strip().ne("").sum())
+                    tracker.rows_per_chunk.append(row_count)
+                    output_columns[display_name] = series
+
+                for extra_name, candidate in extras_map.items():
+                    if candidate.df_col in chunk.columns:
+                        series = chunk[candidate.df_col].astype(str)
+                    else:
+                        series = pd.Series([""] * row_count, dtype=str)
+                    tracker = output_trackers[extra_name]
+                    tracker.total_rows += row_count
+                    tracker.non_empty_count += int(series.str.strip().ne("").sum())
+                    tracker.rows_per_chunk.append(row_count)
+                    output_columns[extra_name] = series
+
+                out_chunk = pd.DataFrame(output_columns, columns=ordered_header)
+                mode = "a" if header_written else "w"
+                to_csv_kwargs = {
+                    "index": False,
+                    "mode": mode,
+                    "header": not header_written,
+                    "encoding": "utf-8-sig",
+                    "sep": dialect.delimiter,
+                    "quotechar": dialect.quotechar,
+                    "doublequote": dialect.doublequote,
+                    "escapechar": dialect.escapechar,
+                    "quoting": dialect.quoting,
+                }
+                if line_terminator:
+                    to_csv_kwargs["lineterminator"] = line_terminator
+                out_chunk.to_csv(output_file, **to_csv_kwargs)
+                header_written = True
+                wrote_any = True
+                chunk_index += 1
+                total_rows_processed += row_count
+                approx = f"~{self.chunksize:,}" if row_count >= self.chunksize else f"{row_count:,}"
+                self.log_signal.emit(
+                    f"   └─ Chunk {chunk_index}: processed {approx} rows (cumulative {total_rows_processed:,})"
+                )
+
+            if not wrote_any:
+                with output_file.open("w", encoding="utf-8-sig", newline="") as fh:
+                    writer_kwargs = {
+                        "delimiter": dialect.delimiter,
+                        "quotechar": dialect.quotechar,
+                        "doublequote": dialect.doublequote,
+                        "escapechar": dialect.escapechar,
+                        "quoting": dialect.quoting,
+                    }
+                    if line_terminator:
+                        writer_kwargs["lineterminator"] = line_terminator
+                    writer = csv.writer(fh, **writer_kwargs)
+                    writer.writerow(ordered_header)
+                self.log_signal.emit("   └─ No data rows detected; header written only.")
             else:
-                result.success += 1
-                if duplicates_removed:
-                    self.log_signal.emit(
-                        f"🧹 Removed {duplicates_removed} duplicate column(s) from {relative_name}"
-                    )
-                if extras_removed:
-                    self.log_signal.emit(
-                        f"✂️ Removed {extras_removed} column(s) not listed in preset from {relative_name}"
-                    )
                 self.log_signal.emit(
-                    f"✅ Column order updated for {relative_name}"
+                    f"   └─ Total rows processed: {total_rows_processed:,} across {chunk_index} chunk(s)"
                 )
-                result.duplicates_removed += duplicates_removed
-                result.extras_removed += extras_removed
+                self.log_signal.emit("   └─ Done update.")
 
+            validation_success = self._validate_output_file(
+                output_file=output_file,
+                ordered_header=ordered_header,
+                output_trackers=output_trackers,
+                total_rows_processed=total_rows_processed,
+            )
+            if not validation_success:
+                self.log_signal.emit(
+                    f"❌ Validation failed for {file_path.name}. Removing output file."
+                )
+                if output_file.exists():
+                    try:
+                        output_file.unlink()
+                    except Exception:
+                        pass
+                self._copy_to_failed(file_path)
+                return False, "Validation failed"
+
+            if extras_preserved and not self.remove_extra_columns:
+                extras_names = ", ".join(candidate.raw_name for candidate in extras_preserved)
+                self.log_signal.emit(
+                    f"➕ Preserved additional column(s) appended in {file_path.name}: {extras_names}"
+                )
+
+            return True, None
+        except Exception as exc:
+            self.log_signal.emit(f"❌ Failed to process {file_path.name}: {exc}")
+            self._copy_to_failed(file_path)
+            return False, str(exc)
+
+    def _compute_candidate_metrics(
+        self, file_path: Path, candidates: List[ColumnCandidateInfo]
+    ) -> None:
+        raise RuntimeError("_compute_candidate_metrics is obsolete and should not be called.")
+
+    def _select_best_candidate(
+        self, candidates: List[ColumnCandidateInfo]
+    ) -> Tuple[ColumnCandidateInfo, int, int]:
+        raise RuntimeError("_select_best_candidate is obsolete and should not be called.")
+
+    def _validate_output_file(
+        self,
+        output_file: Path,
+        ordered_header: List[str],
+        output_trackers: Dict[str, OutputColumnTracker],
+        total_rows_processed: int,
+    ) -> bool:
+        try:
+            with output_file.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.reader(handle)
+                header = next(reader, [])
+                row_count_out = sum(1 for _ in reader)
+            if header != ordered_header:
+                self.log_signal.emit(
+                    f"❌ Header validation failed for {output_file.name}: expected {ordered_header}, found {header}"
+                )
+                return False
+            if row_count_out != total_rows_processed:
+                self.log_signal.emit(
+                    f"❌ Row count mismatch for {output_file.name}: expected {total_rows_processed}, found {row_count_out}"
+                )
+                return False
+
+            for column_name, tracker in output_trackers.items():
+                if tracker.total_rows != total_rows_processed:
+                    self.log_signal.emit(
+                        f"❌ Row alignment mismatch in column '{column_name}' for {output_file.name}."
+                    )
+                    return False
+
+            return True
+        except Exception as exc:
+            self.log_signal.emit(f"❌ Validation error for {output_file.name}: {exc}")
+            return False
+
+    def _write_report(self) -> None:
+        if not self.results:
+            return
+        if self.report_root_path is None:
+            return
+        try:
+            self.report_root_path.mkdir(parents=True, exist_ok=True)
+            report_path = self.report_root_path / "_harmonization_report.txt"
+            success_count = sum(1 for entry in self.results if entry["status"] == "success")
+            failed_entries = [entry for entry in self.results if entry["status"] == "failed"]
+            total = len(self.results)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            lines: List[str] = [
+                "Column Order Harmonizer — Run Summary",
+                f"Timestamp         : {timestamp}",
+                f"Files Processed   : {total}",
+                f"Successes         : {success_count}",
+                f"Failures          : {len(failed_entries)}",
+                "",
+            ]
+            if failed_entries:
+                lines.append("Failures:")
+                for entry in failed_entries:
+                    reason = entry["reason"] or "Unknown failure"
+                    lines.append(f"  - {entry['file']}: {reason}")
+                lines.append("")
+            else:
+                lines.append("No failures recorded. All files harmonized successfully.")
+                lines.append("")
+            lines.append("End of report.")
+            with report_path.open("w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines))
+            self.log_signal.emit(f"📝 Harmonization summary saved to {report_path}")
+        except Exception as exc:
+            self.log_signal.emit(f"⚠️ Unable to write harmonization report: {exc}")
+
+
+@dataclass
+class ScanResult:
+    file_path: Path
+    columns: int
+    rows: int
+
+
+class FileScanWorker(QObject):
+    progress_signal = Signal(int, int)
+    file_scanned = Signal(int, Path, int, int)
+    log_signal = Signal(str)
+    finished_signal = Signal(list, dict)
+
+    def __init__(self, files: List[Path], cache_snapshot: Dict[str, Tuple[float, int, int]]):
+        super().__init__()
+        self.files = files
+        self.cache_snapshot = cache_snapshot or {}
+        self.updated_cache: Dict[str, Tuple[float, int, int]] = {}
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        total = len(self.files)
+        results: List[ScanResult] = []
+
+        for index, file_path in enumerate(self.files, start=1):
+            if self._stop:
+                break
+            columns, rows = self._inspect_file(file_path)
+            results.append(ScanResult(file_path=file_path, columns=columns, rows=rows))
+            self.file_scanned.emit(index, file_path, columns, rows)
             self.progress_signal.emit(index, total)
 
-        self.finished_signal.emit(result.success, result.failed)
+        self.finished_signal.emit(results, self.updated_cache)
 
-    def _process_file(self, file_path: Path) -> tuple[int, int]:
-        with file_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.reader(handle)
-            try:
-                header = next(reader)
-            except StopIteration:
-                raise ValueError("Empty file")
+    def _inspect_file(self, csv_file: Path) -> Tuple[int, int]:
+        cache_key = str(csv_file.resolve())
+        try:
+            stat_info = csv_file.stat()
+            cached = self.cache_snapshot.get(cache_key)
+            if cached and cached[0] == stat_info.st_mtime_ns:
+                self.updated_cache[cache_key] = cached
+                return cached[1], cached[2]
 
-            all_rows = [row for row in reader]
+            columns = 0
+            rows = 0
+            with csv_file.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.reader(handle)
+                header = next(reader, [])
+                columns = len(header)
+                for _ in reader:
+                    rows += 1
 
-        cleaned_header, index_map, duplicates_removed = self._deduplicate_columns(
-            header, all_rows
-        )
-        ordered_header = self._build_header(cleaned_header)
-
-        if not ordered_header:
-            raise ValueError(f"No valid columns detected in {file_path.name}")
-
-        rows: List[List[str]] = []
-        for row in all_rows:
-            row_dict = self._row_to_dict(row, index_map, cleaned_header)
-            rows.append([row_dict.get(column, "") for column in ordered_header])
-
-        self.output_path.mkdir(parents=True, exist_ok=True)
-        output_file = self.output_path / file_path.name
-        with output_file.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(ordered_header)
-            writer.writerows(rows)
-        extras_removed = len(cleaned_header) - len(ordered_header)
-        return duplicates_removed, extras_removed
-
-    @staticmethod
-    def _deduplicate_columns(
-        header: List[str], rows: List[List[str]]
-    ) -> tuple[List[str], List[int], int]:
-        cleaned_header: List[str] = []
-        index_map: List[int] = []
-        seen: Dict[tuple[str, tuple[str, ...]], int] = {}
-        duplicates_removed = 0
-
-        for idx, column in enumerate(header):
-            normalized = column.strip()
-            if not normalized:
-                duplicates_removed += 1
-                continue
-
-            column_values = tuple(
-                row[idx] if idx < len(row) else "" for row in rows
-            )
-            key = (normalized, column_values)
-            if key in seen:
-                duplicates_removed += 1
-                continue
-
-            seen[key] = idx
-            cleaned_header.append(normalized)
-            index_map.append(idx)
-
-        return cleaned_header, index_map, duplicates_removed
-
-    def _build_header(self, cleaned_header: List[str]) -> List[str]:
-        desired: List[str] = []
-        remaining: List[str] = []
-
-        desired_set = set()
-        for column in self.column_sequence:
-            normalized = column.strip()
-            if not normalized:
-                continue
-            if normalized in cleaned_header and normalized not in desired_set:
-                desired.append(normalized)
-                desired_set.add(normalized)
-
-        if self.remove_extra_columns:
-            return desired
-
-        for column in cleaned_header:
-            if column not in desired_set:
-                remaining.append(column)
-        return desired + remaining
-
-    @staticmethod
-    def _row_to_dict(
-        row: List[str], index_map: List[int], header: List[str]
-    ) -> Dict[str, str]:
-        mapping: Dict[str, str] = {}
-        for column, source_index in zip(header, index_map):
-            value = row[source_index] if source_index < len(row) else ""
-            mapping[column] = value
-        return mapping
+            self.updated_cache[cache_key] = (stat_info.st_mtime_ns, columns, rows)
+            return columns, rows
+        except Exception as exc:
+            self.log_signal.emit(f"⚠️ Failed to inspect {csv_file.name}: {exc}")
+            self.updated_cache[cache_key] = (0.0, 0, 0)
+            return 0, 0
 
 
 class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
@@ -244,9 +670,19 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self.csv_files: List[Path] = []
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[ColumnOrderWorker] = None
+        self.scan_worker_thread: Optional[QThread] = None
+        self.scan_worker: Optional[FileScanWorker] = None
 
         self._custom_presets: Dict[str, List[str]] = {}
         self.remove_extra_columns = False
+        self.batch_size_limit: int = 0  # 0 = process all files; override in code if needed.
+        self._scan_cache: Dict[str, Tuple[float, int, int]] = {}
+        self.test_mode = False
+        self._user_input_path: Optional[Path] = None
+        self._user_output_path: Optional[Path] = None
+        self.output_run_root: Optional[Path] = None
+        self.output_run_success: Optional[Path] = None
+        self.output_run_failed: Optional[Path] = None
 
         self._initializing_ui = True
         self.setup_ui()
@@ -304,6 +740,7 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self._initializing_ui = False
         self._toggle_files_empty_state(False, "No CSV files detected. Click \"Scan Files\" to refresh.")
         self._update_action_state()
+        QTimer.singleShot(0, self._update_action_state)
         self._set_status("Ready.")
 
     def build_path_section(self) -> QFrame:
@@ -314,6 +751,11 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         layout.setSpacing(12)
 
         self.build_path_controls(layout)
+
+        self.test_mode_checkbox = QCheckBox("Test Mode (use golden dataset)")
+        self.test_mode_checkbox.setObjectName("modernCheckbox")
+        self.test_mode_checkbox.stateChanged.connect(self._toggle_test_mode)
+        layout.addWidget(self.test_mode_checkbox)
 
         button_row = QHBoxLayout()
         button_row.addStretch()
@@ -339,11 +781,12 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
 
         self.files_table = QTableWidget()
         self.files_table.setObjectName("tableWidget")
-        self.files_table.setColumnCount(2)
-        self.files_table.setHorizontalHeaderLabels(["Filename", "Columns (unique)"])
+        self.files_table.setColumnCount(3)
+        self.files_table.setHorizontalHeaderLabels(["Filename", "Columns (unique)", "Rows"])
         header_view = self.files_table.horizontalHeader()
         header_view.setSectionResizeMode(0, QHeaderView.Stretch)
         header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.files_table.setAlternatingRowColors(True)
         self.files_table.setMinimumHeight(220)
         self.files_table.hide()
@@ -534,18 +977,29 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
     def _is_worker_active(self) -> bool:
         return bool(self.worker_thread and self.worker_thread.isRunning())
 
+    def _is_scan_active(self) -> bool:
+        return bool(self.scan_worker_thread and self.scan_worker_thread.isRunning())
+
     def _update_action_state(self) -> None:
         has_files = bool(getattr(self, "csv_files", []))
         worker_active = self._is_worker_active()
+        scan_active = self._is_scan_active()
 
         if hasattr(self, "reorder_btn"):
-            self.reorder_btn.setEnabled(has_files and not worker_active)
+            self.reorder_btn.setEnabled(has_files and not worker_active and not scan_active)
         if hasattr(self, "scan_btn"):
-            self.scan_btn.setEnabled(not worker_active)
+            self.scan_btn.setEnabled(not worker_active and not scan_active)
         if hasattr(self, "reset_btn"):
-            self.reset_btn.setEnabled(not worker_active)
+            self.reset_btn.setEnabled(not worker_active and not scan_active)
 
     def reset_tool_state(self) -> None:
+        if self._is_scan_active():
+            QMessageBox.information(
+                self,
+                "Scan In Progress",
+                "Please wait for the file scan to finish before resetting.",
+            )
+            return
         if self._is_worker_active():
             QMessageBox.information(
                 self,
@@ -582,6 +1036,9 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         if hasattr(self, "reorder_btn"):
             self.current_theme.apply_to_widget(self.reorder_btn, "button_primary")
 
+        if hasattr(self, "test_mode_checkbox"):
+            self.current_theme.apply_to_widget(self.test_mode_checkbox, "checkbox")
+
         if hasattr(self, "open_output_btn"):
             self.current_theme.apply_to_widget(self.open_output_btn, "button_secondary")
 
@@ -607,10 +1064,18 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
         self._apply_theme_styles()
 
     def scan_files(self) -> None:
+        if self.scan_worker_thread and self.scan_worker_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "Scan In Progress",
+                "File scanning is already running.",
+            )
+            return
+
         self.csv_files.clear()
         self.files_table.setRowCount(0)
         if hasattr(self, "progress_bar"):
-            self.progress_bar.setVisible(False)
+            self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
 
         input_path = Path(self.input_path)
@@ -623,55 +1088,42 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
                 f"Input path does not exist:\n{input_path}",
             )
             self._update_action_state()
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
             return
 
         files = sorted(input_path.glob("*.csv"))
-        self.csv_files = files
-
         if not files:
             self._toggle_files_empty_state(False, "No CSV files found in the selected folder.")
             self._set_status("No CSV files found.")
             if self.execution_log:
                 self.log("⚠️ No CSV files detected in the input folder.")
             self._update_action_state()
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
             return
 
         self._toggle_files_empty_state(True)
-
-        self.execution_log_messages = []
-        for row_index, csv_file in enumerate(files):
-            columns = self._peek_columns(csv_file)
-            self.files_table.insertRow(row_index)
-            self.files_table.setItem(
-                row_index,
-                0,
-                QTableWidgetItem(csv_file.name),
-            )
-            self.files_table.setItem(
-                row_index,
-                1,
-                QTableWidgetItem(str(columns)),
-            )
-
-        self._set_status(f"Found {len(files)} CSV file(s).")
-        if self.execution_log:
-            self.log(f"📂 Found {len(files)} CSV file(s) in input folder.")
+        self._set_status(f"Scanning {len(files)} file(s)…")
         self._update_action_state()
 
-    @staticmethod
-    def _peek_columns(csv_file: Path) -> int:
-        try:
-            with csv_file.open("r", encoding="utf-8-sig", newline="") as handle:
-                reader = csv.reader(handle)
-                header = next(reader, [])
-                unique = set()
-                for column in header:
-                    normalized = column.strip()
-                    if normalized:
-                        unique.add(normalized)
-                return len(unique)
-        except Exception:
-            return 0
+        cache_snapshot = dict(self._scan_cache)
+        self.scan_worker_thread = QThread()
+        self.scan_worker = FileScanWorker(files=files, cache_snapshot=cache_snapshot)
+        self.scan_worker.moveToThread(self.scan_worker_thread)
+
+        self.scan_worker_thread.started.connect(self.scan_worker.run)
+        self.scan_worker.progress_signal.connect(self._handle_scan_progress)
+        self.scan_worker.file_scanned.connect(self._handle_scan_result)
+        self.scan_worker.log_signal.connect(self.log_message)
+        self.scan_worker.finished_signal.connect(self._handle_scan_finished)
+        self.scan_worker.finished_signal.connect(self.scan_worker_thread.quit)
+        self.scan_worker.finished_signal.connect(self.scan_worker.deleteLater)
+        self.scan_worker_thread.finished.connect(self._cleanup_scan_worker)
+
+        self.scan_worker_thread.start()
+        if self.execution_log:
+            self.log(f"🔍 Scanning {len(files)} CSV file(s)…")
 
     def on_preset_changed(self, preset_name: str) -> None:
         if preset_name == "Custom (edit below)":
@@ -784,19 +1236,55 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             )
             return
 
+        base_output = self._compute_base_output_path(self.output_path)
+        if base_output != Path(self.output_path):
+            self.path_manager.set_output_path(base_output)
+            self.output_path = base_output
+            self._sync_path_edits(self.input_path, base_output)
+        else:
+            self.path_manager.set_output_path(base_output)
+
+        path_info = self.allocate_run_directory(
+            "Column Order Harmonizer",
+            script_name=Path(__file__).name,
+            sync_paths=False,
+            announce=False,
+        )
+        self.output_run_root = path_info.get("root")
+        self.output_run_success = path_info.get("success")
+        self.output_run_failed = path_info.get("failed")
+        if self.execution_log and self.output_run_root:
+            self.log(f"📁 Output run directory: {self.output_run_root}")
+            if self.output_run_success:
+                self.log(f"   ├─ Success: {self.output_run_success}")
+            if self.output_run_failed:
+                self.log(f"   └─ Failed: {self.output_run_failed}")
+
+        files_to_process = self._select_files_for_batch()
+        if not files_to_process:
+            QMessageBox.information(
+                self,
+                "No Files Selected",
+                "No files are selected for harmonization.",
+            )
+            return
+
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(len(self.csv_files))
-        self._set_status("Starting column harmonization...")
+        self.progress_bar.setMaximum(len(files_to_process))
+        self._set_status("Starting column harmonization…")
         self._update_action_state()
 
         self.worker_thread = QThread()
         self.worker = ColumnOrderWorker(
-            files=self.csv_files,
+            files=files_to_process,
             column_sequence=sequence,
             remove_extra_columns=self.remove_extra_columns,
             input_path=Path(self.input_path),
-            output_path=Path(self.output_path),
+            output_path=Path(self.output_run_root or self.output_path),
+            output_success_path=self.output_run_success,
+            output_failed_path=self.output_run_failed,
+            report_root_path=self.output_run_root,
         )
         self.worker.moveToThread(self.worker_thread)
 
@@ -836,9 +1324,62 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             self.log(f"🏁 {summary}")
             if success:
                 self.log("Review log for duplicate or extra column removals per file.")
+            if getattr(self, "output_run_root", None):
+                self.log(f"🗂 Output root: {self.output_run_root}")
+                if getattr(self, "output_run_success", None):
+                    self.log(f"   ├─ Success: {self.output_run_success}")
+                if getattr(self, "output_run_failed", None):
+                    self.log(f"   └─ Failed: {self.output_run_failed}")
+
         self.worker = None
         self.worker_thread = None
+        self.show()
+        self.raise_()
+        self.activateWindow()
         self._update_action_state()
+
+    def _handle_scan_progress(self, current: int, total: int) -> None:
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(current)
+        self._set_status(f"Scanning files ({current}/{total})…")
+
+    def _handle_scan_result(self, index: int, file_path: Path, columns: int, rows: int) -> None:
+        row_position = self.files_table.rowCount()
+        self.files_table.insertRow(row_position)
+        self.files_table.setItem(row_position, 0, QTableWidgetItem(file_path.name))
+        self.files_table.setItem(row_position, 1, QTableWidgetItem(str(columns)))
+        self.files_table.setItem(row_position, 2, QTableWidgetItem(str(rows)))
+
+    def _handle_scan_finished(self, results: List[ScanResult], updated_cache: Dict[str, Tuple[float, int, int]]) -> None:
+        self.csv_files = [result.file_path for result in results]
+        self._scan_cache.update(updated_cache)
+        total_files = len(results)
+        self._set_status(f"Found {total_files} CSV file(s).")
+        if self.execution_log:
+            self.log(f"📂 Scan complete: {total_files} CSV file(s) ready.")
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setValue(0)
+        self._update_action_state()
+
+    def _cleanup_scan_worker(self) -> None:
+        if self.scan_worker_thread:
+            self.scan_worker_thread.deleteLater()
+        self.scan_worker_thread = None
+        self.scan_worker = None
+        self._update_action_state()
+
+    def _select_files_for_batch(self) -> List[Path]:
+        if self.batch_size_limit and self.batch_size_limit > 0:
+            selected = list(self.csv_files[: self.batch_size_limit])
+            if self.execution_log:
+                self.log(
+                    f"📦 Processing first {len(selected)} file(s) out of {len(self.csv_files)} "
+                    f"(batch size limit: {self.batch_size_limit})."
+                )
+            return selected
+        return list(self.csv_files)
 
     def open_input_folder(self) -> None:
         try:
@@ -851,8 +1392,9 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
             )
 
     def open_output_folder(self) -> None:
+        target = self.output_run_root or self.output_path
         try:
-            os.startfile(self.output_path)
+            os.startfile(target)
         except Exception as exc:  # pragma: no cover - OS-specific
             QMessageBox.warning(
                 self,
@@ -873,6 +1415,65 @@ class ColumnOrderHarmonizer(PathConfigMixin, BaseToolDialog):
                 self.log("✂️ Columns not present in the preset will be removed from output files.")
             else:
                 self.log("🔄 Columns not present in the preset will be appended after ordered columns.")
+
+    def _toggle_test_mode(self, state: int) -> None:
+        self.test_mode = state == Qt.Checked
+        if self.test_mode:
+            self._user_input_path = Path(self.input_path)
+            self._user_output_path = Path(self.output_path)
+            test_input = self._get_test_data_path()
+            test_output = self._get_test_output_path()
+            test_output.mkdir(parents=True, exist_ok=True)
+            self._sync_path_edits(test_input, test_output)
+            if self.execution_log:
+                self.log("🧪 Test Mode enabled: using golden dataset.")
+        else:
+            restored_input = self._user_input_path or Path(self.input_path)
+            restored_output = self._user_output_path or Path(self.output_path)
+            self._sync_path_edits(restored_input, restored_output)
+            if self.execution_log:
+                self.log("🧪 Test Mode disabled: using configured paths.")
+        self.scan_files()
+
+    def _get_test_data_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent.parent / "test_data"
+
+    def _get_test_output_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent.parent / "test_output"
+
+    def _compute_base_output_path(self, path: Path) -> Path:
+        """
+        Derive the user-selected base output directory by stripping tool/script/timestamp folders.
+        """
+        try:
+            parts = list(Path(path).resolve().parts)
+        except FileNotFoundError:
+            parts = list(Path(path).absolute().parts)
+
+        lowered = [part.lower() for part in parts]
+        strip_index = None
+        for idx, part in enumerate(parts):
+            part_lower = lowered[idx]
+            if part_lower == _SANITIZED_TOOL_NAME.lower():
+                strip_index = idx
+                break
+            if part_lower == _SANITIZED_SCRIPT_NAME.lower():
+                strip_index = idx
+                break
+            if _TIMESTAMP_PATTERN.fullmatch(part):
+                strip_index = idx
+                break
+            if part_lower in {"success", "failed"}:
+                strip_index = idx
+                break
+
+        if strip_index is not None and strip_index > 0:
+            base = Path(parts[0])
+            for segment in parts[1:strip_index]:
+                base /= segment
+            return base
+
+        return Path(path)
 
     def closeEvent(self, event):  # noqa: N802
         if self.worker_thread and self.worker_thread.isRunning():

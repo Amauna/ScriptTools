@@ -10,7 +10,7 @@ Welcome to the storm, Cutie. This isn’t a bland “install and pray” checkli
 - During install, **tick “Add Python to PATH.”** Skip this and you’ll cry later.
 - Confirm your destiny:
   ```powershell
-  py --version
+  python --version
   ```
   If it doesn’t whisper `3.12`, fix it before moving on.
 
@@ -19,7 +19,7 @@ Welcome to the storm, Cutie. This isn’t a bland “install and pray” checkli
 ## II. Forge a Sacred Virtual Environment
 Inside the project root (`Script-Tools`), conjure your venv:
 ```powershell
-py -3.12 -m venv venv
+python -m venv venv
 ```
 Anoint it:
 ```powershell
@@ -52,6 +52,11 @@ Witness PySide6 installing without tantrums. Confirm the bond:
 python -m pip show PySide6
 ```
 You want version metadata. If it shrugs “Package not found,” you missed a step above. Rewind.
+
+🎯 **Batch Tool Extra:** the metric fixer CLI reads `schemas/metric_schema_v1.yaml`. If `PyYAML` isn’t already installed, add it now:
+```powershell
+pip install PyYAML
+```
 
 ---
 
@@ -92,11 +97,40 @@ You are now armed with velvet lightning. Launch the suite, shatter complacency, 
 ---
 
 ## IX. Lightning Recap (When Memory Betrays You)
-1. `py --list` → confirm 3.12 is installed and active.
-2. `py -3.12 -m venv venv` → forge the virtual environment (delete old `venv` first if needed).
+1. `python --version` → confirm 3.12 is installed and active.
+2. `python -m venv venv` → forge the virtual environment (delete old `venv` first if needed).
 3. `./venv/Scripts/Activate.ps1` → slip into the venv’s embrace.
 4. `pip install -r requirements.txt` → feed the suite its dependencies.
 5. `python main.py` → launch loudly and watch logs in real time.
 6. `Launch_GA4_Tools.vbs` → silent, polished launch once the loud run succeeds.
 
 Bookmark it, tattoo it, tape it to your monitor. Obey the sequence and the suite will always rise for you. 💙⚡
+
+---
+
+## X. Metric Fixer Batch CLI (Bonus Storm)
+- Activate the venv, navigate to the project root, then run:
+  ```powershell
+  python tools\data_cleaning_transformation\metric_fixer_batch.py `
+      --input  "C:\path\to\raw_csv" `
+      --output "C:\path\to\clean_outputs" `
+      --schema "schemas\metric_schema_v1.yaml" `
+      --workers 2
+  ```
+- Add `--dry-run --limit 5 --workers 1` for a gentle smoke test.
+- Outputs live in `<output>/clean_csv/`, with logs + manifest alongside—read the JSONL manifest to see per-file coercion counts.
+- Use `--resume` to skip files already blessed, `--no-parquet` to skip Parquet, and tune `--workers` so your machine doesn’t melt.
+
+---
+
+## XI. Date Format Converter GUI (High-Volume Rituals)
+- Launch from the suite (`Date & Time Utilities → Date Format Converter`) after scanning your CSV folder.
+- The scan pass is now header-first: it caches previews, counts rows, and auto-detects the date column without any manual selection.
+- Scan results are grouped by format: each format gets its own tab listing just the filenames, plus a checkbox to enable/disable that entire format. You can also uncheck individual files inside a tab for finer control.
+- Before converting:
+  - Adjust **chunk size** (default `50 000`) if you need to squeeze RAM—smaller chunks reduce memory but increase runtime.
+  - Set **workers** to match available CPU cores; 2–4 is the sweet spot unless you enjoy throttling your laptop fan.
+  - The dialog will warn you when total bytes exceed ~1.5 GB. That’s your cue to consider a dry-run or drop `workers` down a notch.
+- Conversion defaults to targeting only the formats (and files) you leave checked. Flip a format checkbox—or individual file checkboxes—if you want to include or exclude them. Use the built-in preset dropdowns to quickly add common input formats or swap the output format template without manual typing.
+- During conversion you’ll see live progress with success/skip/failure counts plus per-file status in the execution log. Skipped entries (resume mode) still advance the bar so you know nothing stalled.
+- The summary card links to the manifest and shows parsed / inferred / fallback counts. Use the manifest to triage stubborn files without re-running the entire batch.

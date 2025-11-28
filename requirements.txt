@@ -1,24 +1,14 @@
-# 🌊 GA4 Data Analyst Tools Suite - Dependencies
+# 🌊 GA4 Data Analyst Tools Suite — core runtime dependencies
 # Professional tools for data analysts
 
-# GUI Framework - PySide6 (Modern Qt for Python)
+# GUI Framework — PySide6 (Modern Qt for Python)
 PySide6>=6.6.0
-PySide6-Addons>=6.6.0
 Pillow>=10.0.0
 
 # Data Processing
 pandas>=2.0.0
-numpy>=1.24.0
-openpyxl>=3.1.0
+PyYAML>=6.0.0
 
-# Web Scraping & Automation
+# Automation & Browser Extraction
 playwright>=1.40.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-
-# API Integration
-requests>=2.31.0
-
-# Date Utilities
-python-dateutil>=2.8.0
 

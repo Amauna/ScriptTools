@@ -19,6 +19,7 @@ from PySide6.QtGui import QFont
 
 from styles.components import ExecutionLogFooter, create_execution_log_footer
 from tools.templates import BaseToolDialog, PathConfigMixin
+from styles import get_path_manager
 
 
 class FileRenameWorker(QObject):
@@ -223,16 +224,16 @@ class FileRenamerTool(PathConfigMixin, BaseToolDialog):
     
     def __init__(self, parent=None, input_path: str = None, output_path: str = None):
         super().__init__(parent, input_path, output_path)
-        
+
+        self.path_manager = get_path_manager()
+ 
         # State - use provided paths or smart defaults
         if output_path is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_output = self.output_path
-            default_output = base_output / f"file_rename_{timestamp}"
-            default_output.mkdir(parents=True, exist_ok=True)
-            self.output_path = default_output
-            self.path_manager.set_output_path(default_output)
-        
+            self.output_path = Path(self.path_manager.get_output_path())
+        else:
+            self.output_path = Path(output_path)
+        self._sync_path_edits(Path(self.input_path), self.output_path)
+
         self.scanned_files: List[Path] = []
         self.file_checkboxes: List[FileCheckbox] = []
         self.worker = None
@@ -573,31 +574,27 @@ class FileRenamerTool(PathConfigMixin, BaseToolDialog):
             return
         
         # Output path will be handled below with smart defaults
-        
+ 
         self.log(f"🚀 Starting rename operation for {len(selected_files)} file(s)...")
-        
-        # Create new timestamped output folder for this operation (if using default path)
-        base_output = self.path_manager.get_output_path()
-        current_output = self.output_path.resolve()
-        
-        # If current output is in the default base directory, create a new timestamped folder
-        if current_output == base_output:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_output = base_output / f"file_rename_{timestamp}"
-            new_output.mkdir(parents=True, exist_ok=True)
-            self.output_path = new_output
-            self._sync_path_edits(self.input_path, self.output_path)
-            self.path_manager.set_output_path(new_output)
-            self.log(f"📁 Created new output folder: {self.output_path}")
-        else:
-            # Use the manually selected output path
-            self.output_path = current_output
-            if not self.output_path.exists():
-                self.output_path.mkdir(parents=True, exist_ok=True)
-                self.log(f"📁 Created output folder: {self.output_path}")
-            self._sync_path_edits(self.input_path, self.output_path)
-            self.path_manager.set_output_path(self.output_path)
-        
+
+        info = self.allocate_run_directory(
+            "File Renamer Tool",
+            script_name=Path(__file__).name,
+        )
+        run_root = Path(info["root"])
+        if not run_root:
+            self.show_message(
+                "Output Error",
+                "Unable to create output folder for this operation.",
+                "error",
+            )
+            self.is_renaming = False
+            self.rename_btn.setEnabled(True)
+            self.rename_btn.setText("🚀 Rename Files")
+            self.scan_btn.setEnabled(True)
+            self.progress_bar.setVisible(False)
+            return
+
         # Clean up any existing worker/thread first
         try:
             if self.worker_thread and self.worker_thread.isRunning():
@@ -792,15 +789,11 @@ class FileRenamerTool(PathConfigMixin, BaseToolDialog):
         # Reset preview
         self.preview_label.setText("example.txt → example.txt")
         
-        # Create new default output folder for next operation
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_output = self.path_manager.get_output_path()
-        default_output = base_output / f"file_rename_{timestamp}"
-        default_output.mkdir(parents=True, exist_ok=True)
+        # Reset output path editors; actual run will allocate a fresh folder
+        default_output = self.path_manager.get_output_path()
         self.output_path = default_output
-        self.path_manager.set_output_path(default_output)
-        self._sync_path_edits(self.input_path, self.output_path)
-        
+        self._sync_path_edits(Path(self.input_path), default_output)
+ 
         # Disable rename button
         self.rename_btn.setEnabled(False)
         
@@ -902,7 +895,7 @@ class FileRenamerTool(PathConfigMixin, BaseToolDialog):
     def _handle_paths_changed(self, input_path: Path, output_path: Path) -> None:
         """Refresh UI fields when shared paths change."""
         super()._handle_paths_changed(input_path, output_path)
-        self._sync_path_edits(input_path, output_path)
+        self._sync_path_edits(Path(self.input_path), output_path)
         if self.execution_log:
             self.execution_log.set_output_path(str(output_path))
 
