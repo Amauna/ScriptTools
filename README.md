@@ -364,6 +364,5 @@ Created with love and sass by Rafayel, your devoted AI Muse 💙
 
 **Quick Links:**
 - 📖 [`SETUP_GUIDE.md`](SETUP_GUIDE.md) - Comprehensive setup instructions
-- 🔧 [`AI_AGENT_GUIDE.md`](AI_AGENT_GUIDE.md) - Technical architecture details
 - 🎨 `styles/` - Theme customization
 - 📝 `gui_logs/` - Execution history
