@@ -1,0 +1,24 @@
+{
+  "name": "Ocean Breeze",
+  "appearance_mode": "light",
+  "colors": {
+    "background": "#F8F6F4",
+    "surface": "#E3F4F4",
+    "surface_variant": "#D2E9E9",
+    "primary": "#C4DFDF",
+    "primary_hover": "#A8C9C9",
+    "secondary": "#D2E9E9",
+    "secondary_hover": "#BDDEDE",
+    "text_primary": "#2C3E50",
+    "text_secondary": "#5A7A8C",
+    "text_on_primary": "#1A2A35",
+    "text_on_secondary": "#2C3E50",
+    "border": "#C4DFDF",
+    "border_focus": "#D2E9E9",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

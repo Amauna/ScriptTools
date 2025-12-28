@@ -1,0 +1,24 @@
+{
+  "name": "Autumn Leaves",
+  "appearance_mode": "light",
+  "colors": {
+    "background": "#F2F2F2",
+    "surface": "#EBD5D5",
+    "surface_variant": "#EA8A8A",
+    "primary": "#685454",
+    "primary_hover": "#524040",
+    "secondary": "#EA8A8A",
+    "secondary_hover": "#D77777",
+    "text_primary": "#3A3A3A",
+    "text_secondary": "#705A5A",
+    "text_on_primary": "#F2F2F2",
+    "text_on_secondary": "#FFFFFF",
+    "border": "#EA8A8A",
+    "border_focus": "#685454",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

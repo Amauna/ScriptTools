@@ -1,0 +1,24 @@
+{
+  "name": "Midnight Storm",
+  "appearance_mode": "dark",
+  "colors": {
+    "background": "#222831",
+    "surface": "#30475E",
+    "surface_variant": "#3D5A73",
+    "primary": "#F05454",
+    "primary_hover": "#FF6B6B",
+    "secondary": "#30475E",
+    "secondary_hover": "#3D5A73",
+    "text_primary": "#DDDDDD",
+    "text_secondary": "#A0B4C3",
+    "text_on_primary": "#FFFFFF",
+    "text_on_secondary": "#DDDDDD",
+    "border": "#30475E",
+    "border_focus": "#F05454",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

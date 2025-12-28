@@ -1,0 +1,24 @@
+{
+  "name": "Ethereal Mist",
+  "appearance_mode": "light",
+  "colors": {
+    "background": "#E2BBE9",
+    "surface": "#9B86BD",
+    "surface_variant": "#7776B3",
+    "primary": "#5A639C",
+    "primary_hover": "#4A5280",
+    "secondary": "#7776B3",
+    "secondary_hover": "#6565A0",
+    "text_primary": "#2D2A4A",
+    "text_secondary": "#5A5A80",
+    "text_on_primary": "#FFFFFF",
+    "text_on_secondary": "#FFFFFF",
+    "border": "#7776B3",
+    "border_focus": "#5A639C",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

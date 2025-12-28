@@ -1,0 +1,24 @@
+{
+  "name": "Cosmic Dreams",
+  "appearance_mode": "dark",
+  "colors": {
+    "background": "#1F2544",
+    "surface": "#474F7A",
+    "surface_variant": "#81689D",
+    "primary": "#FFD0EC",
+    "primary_hover": "#FFE0F3",
+    "secondary": "#81689D",
+    "secondary_hover": "#947BB0",
+    "text_primary": "#F0E6F6",
+    "text_secondary": "#B49FC8",
+    "text_on_primary": "#1F2544",
+    "text_on_secondary": "#FFFFFF",
+    "border": "#81689D",
+    "border_focus": "#FFD0EC",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

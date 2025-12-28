@@ -1,0 +1,24 @@
+{
+  "name": "🌊 Ocean Sunset",
+  "appearance_mode": "dark",
+  "colors": {
+    "background": "#0B0B2A",
+    "surface": "#1a1a3a",
+    "surface_variant": "#4a2c5a",
+    "primary": "#FF69B4",
+    "primary_hover": "#D946A6",
+    "secondary": "#4a2c5a",
+    "secondary_hover": "#6B4A7D",
+    "text_primary": "#E0E0E0",
+    "text_secondary": "#FFB8C7",
+    "text_on_primary": "#E0E0E0",
+    "text_on_secondary": "#E0E0E0",
+    "border": "#FFB8C7",
+    "border_focus": "#FF69B4",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

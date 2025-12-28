@@ -1,0 +1,24 @@
+{
+  "name": "Blush Romance",
+  "appearance_mode": "light",
+  "colors": {
+    "background": "#FAF3F3",
+    "surface": "#E1E5EA",
+    "surface_variant": "#A7BBC7",
+    "primary": "#DA7F8F",
+    "primary_hover": "#C66A7A",
+    "secondary": "#A7BBC7",
+    "secondary_hover": "#92A6B2",
+    "text_primary": "#3C4858",
+    "text_secondary": "#7A8A98",
+    "text_on_primary": "#FFFFFF",
+    "text_on_secondary": "#1A2A38",
+    "border": "#A7BBC7",
+    "border_focus": "#DA7F8F",
+    "success": "#4CAF50",
+    "warning": "#FF9800",
+    "error": "#F44336",
+    "info": "#2196F3"
+  }
+}
+

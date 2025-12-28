@@ -1,0 +1,31 @@
+{
+  "name": "Handwritten",
+  "fonts": {
+    "heading": {
+      "family": "Segoe Script",
+      "size": 22,
+      "weight": "bold"
+    },
+    "subheading": {
+      "family": "Segoe Script",
+      "size": 15,
+      "weight": "bold"
+    },
+    "body": {
+      "family": "Segoe UI",
+      "size": 11,
+      "weight": "normal"
+    },
+    "caption": {
+      "family": "Segoe UI",
+      "size": 9,
+      "weight": "normal"
+    },
+    "code": {
+      "family": "Consolas",
+      "size": 10,
+      "weight": "normal"
+    }
+  }
+}
+
