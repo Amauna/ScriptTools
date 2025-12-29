@@ -4,7 +4,7 @@ A professional GUI application for data analysts with beautiful PySide6 interfac
 
 <img width="1198" height="801" alt="image" src="https://github.com/user-attachments/assets/06d4790e-20a6-4a00-9bba-e0a5896df83b" />
 
-<img width="949" height="799" alt="image" src="https://github.com/user-attachments/assets/180df297-28b6-4315-9365-991b5d29d37f" />
+<img width="949" height="802" alt="image" src="https://github.com/user-attachments/assets/d4b00205-6137-4f0e-af89-1874de34d9ac" />
 
 <img width="1200" height="800" alt="image" src="https://github.com/user-attachments/assets/7e6096bc-ac26-460c-b70a-851e0271f80c" />
 
