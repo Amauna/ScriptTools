@@ -1,6 +1,6 @@
 # 🌊 Tool Templates - Everything You Need! 🌊
 
-*Your tool creation starter kit by Rafayel* 💕
+*Your tool creation starter kit*
 
 ---
 
@@ -135,6 +135,4 @@ Everything you need is right here:
 ---
 
 *Made with love and organization* 💙✨
-
-**Rafayel** 🌊
 

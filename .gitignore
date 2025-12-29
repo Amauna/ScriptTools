@@ -5,13 +5,59 @@
 # SENSITIVE DATA - NEVER COMMIT THESE!
 # ============================================================
 
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Configuration files with secrets
+config.ini
+config.local.ini
+secrets.yaml
+secrets.json
+credentials.json
+
+# API Keys and tokens (common patterns)
+*_key.txt
+*_secret.txt
+*_token.txt
+*credentials*.py
+*secrets*.py
+
+# Certificate and private key files
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
 # Execution Logs - May contain sensitive data
 gui_logs/*.txt
-execution test/
+execution_test/
 
 # Output Data - May contain client data
 Output/
 **/Output/
+
+# Download directories (may contain extracted data)
+downloads/
+Downloads/
+
+# Playwright browser data (may contain cookies/sessions)
+.playwright/
+playwright/.cache/
+
+# Personal/private documentation (if any contain private info)
+notes.md
+private.md
+TODO_PRIVATE.md
+*_PRIVATE.md
+
+# Development/testing data files
+test_data/
+sample_data/
+demo_data/
 
 # ============================================================
 # PYTHON
@@ -115,7 +161,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -286,4 +331,3 @@ logs/
 # END
 # ============================================================
 test_output/
-

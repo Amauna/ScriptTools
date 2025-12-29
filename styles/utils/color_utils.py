@@ -91,3 +91,64 @@ def get_contrast_text_color(bg_hex: str) -> str:
     luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
     return "#000000" if luminance > 0.5 else "#FFFFFF"
 
+
+def calculate_contrast_ratio(color1: str, color2: str) -> float:
+    """
+    Calculate WCAG contrast ratio between two colors
+    
+    Args:
+        color1: First color (hex string)
+        color2: Second color (hex string)
+    
+    Returns:
+        Contrast ratio (1.0 to 21.0, where 4.5 is WCAG AA, 7.0 is WCAG AAA)
+    """
+    def get_relative_luminance(rgb: tuple[int, int, int]) -> float:
+        """Calculate relative luminance per WCAG 2.1"""
+        r, g, b = rgb
+        
+        def linearize(channel: int) -> float:
+            """Convert sRGB channel to linear RGB"""
+            val = channel / 255.0
+            if val <= 0.03928:
+                return val / 12.92
+            return ((val + 0.055) / 1.055) ** 2.4
+        
+        return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+    
+    rgb1 = hex_to_rgb(color1)
+    rgb2 = hex_to_rgb(color2)
+    
+    l1 = get_relative_luminance(rgb1)
+    l2 = get_relative_luminance(rgb2)
+    
+    # Ensure lighter color is in numerator
+    lighter = max(l1, l2)
+    darker = min(l1, l2)
+    
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def validate_contrast(
+    foreground: str, 
+    background: str, 
+    min_ratio: float = 4.5,
+    large_text: bool = False
+) -> tuple[bool, float]:
+    """
+    Validate contrast ratio meets WCAG standards
+    
+    Args:
+        foreground: Text color (hex string)
+        background: Background color (hex string)
+        min_ratio: Minimum required ratio (4.5 for normal text, 3.0 for large text)
+        large_text: Whether this is large text (18pt+ or 14pt+ bold)
+    
+    Returns:
+        Tuple of (is_valid, actual_ratio)
+    """
+    if large_text:
+        min_ratio = 3.0
+    
+    ratio = calculate_contrast_ratio(foreground, background)
+    return ratio >= min_ratio, ratio

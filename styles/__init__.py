@@ -1,8 +1,6 @@
 """
 🌊 GA4 Tools Suite - Styles Package
 Centralized theme and styling system
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 # PySide6 theme system
@@ -11,6 +9,11 @@ from .theme_loader import (
     ThemeManager,
     get_theme_manager
 )
+
+# Theme types and validation
+from .types import ThemeData, ThemeColors, ThemeMetadata
+from .theme_validator import ThemeValidator, ThemeValidationResult
+from .style_registry import StyleRegistry
 
 # PySide6 helper functions
 from .pyside6_theme_helper import (
@@ -62,6 +65,13 @@ __all__ = [
     'ThemeLoader',
     'ThemeManager',
     'get_theme_manager',
+    # Theme types and validation
+    'ThemeData',
+    'ThemeColors',
+    'ThemeMetadata',
+    'ThemeValidator',
+    'ThemeValidationResult',
+    'StyleRegistry',
     # PySide6 helpers
     'apply_theme_to_app',
     'apply_glass_effect',
@@ -85,6 +95,8 @@ __all__ = [
     'darken_color',
     'adjust_opacity',
     'get_contrast_text_color',
+    'calculate_contrast_ratio',
+    'validate_contrast',
     'get_path_manager',
     'PathManager',
     'get_log_manager',

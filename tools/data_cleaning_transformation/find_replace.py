@@ -717,22 +717,25 @@ class BigQueryCSVCleaner(QDialog):
             return
         replace_text = self.repl_edit.text()
 
-        # Output folder rotation
-        current_output = Path(self.out_edit.text()).expanduser().resolve()
-        base_output = self.path_manager.get_output_path()
-        if current_output == base_output:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_output = base_output / f"find_replace_{ts}"
-            new_output.mkdir(parents=True, exist_ok=True)
-            self.output_path = new_output
-            self.path_manager.set_output_path(new_output)
-            self._log(f"📁 Created new output folder: {self.output_path}")
-        else:
-            self.output_path = current_output
-            if not self.output_path.exists():
-                self.output_path.mkdir(parents=True, exist_ok=True)
-                self._log(f"📁 Created output folder: {self.output_path}")
-            self.path_manager.set_output_path(self.output_path)
+        # Use PathManager to create proper output directory structure
+        try:
+            path_info = self.path_manager.prepare_tool_output(
+                "Find and Replace Tool",
+                script_name=Path(__file__).name,
+            )
+            run_root = path_info.get("root")
+            if not run_root:
+                QMessageBox.critical(self, "Error", "Could not create output directory")
+                return
+            
+            self.output_path = run_root
+            # Update UI field to show the new output path
+            if hasattr(self, 'out_edit'):
+                self.out_edit.setText(str(run_root))
+            self._log(f"📁 Output run directory: {self.output_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to create output directory: {str(e)}")
+            return
 
         # Prepare worker with cleaning options
         cleaning_options = {

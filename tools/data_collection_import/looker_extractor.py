@@ -1159,7 +1159,7 @@ class LookerStudioExtractorTool(PathConfigMixin, QDialog):
         url_layout.addWidget(url_label)
         
         self.url_entry = QLineEdit()
-        self.url_entry.setText("https://lookerstudio.google.com/reporting/df3de77e-6a24-4d6b-9631-d0e8d94aa06d/page/kIs5C")
+        self.url_entry.setText("https://lookerstudio.google.com/")  
         self.url_entry.setPlaceholderText("https://lookerstudio.google.com/reporting/...")
         self.url_entry.setObjectName("urlInput")
         self.url_entry.setMinimumHeight(35)

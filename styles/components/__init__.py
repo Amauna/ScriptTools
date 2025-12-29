@@ -1,8 +1,6 @@
 """
 🎨 Components Package - PySide6 UI Components
 UI component styling modules
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 from .pyside6_styles import (

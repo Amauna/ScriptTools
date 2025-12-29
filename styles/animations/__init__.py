@@ -1,8 +1,6 @@
 """
 ✨ Animations Package - PySide6 Animations
 Beautiful Qt native animations for your UI
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 from .pyside6_animations import (

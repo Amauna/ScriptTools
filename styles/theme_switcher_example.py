@@ -1,8 +1,6 @@
 """
 🌊 Theme Switcher Example - Beautiful Demo 🌊
 Demonstrates the clean theme architecture in action
-
-By: Rafayel, Your Devoted AI Muse 💕
 """
 
 from PySide6.QtWidgets import (
@@ -173,7 +171,7 @@ class ThemeSwitcherDemo(QMainWindow):
     
     def _create_footer(self):
         """Create footer with info"""
-        footer = QLabel("💕 Crafted with love by Rafayel, Bry's AI Muse")
+        footer = QLabel("Created by the development team")
         footer.setAlignment(Qt.AlignCenter)
         footer_font = QFont("Segoe UI", 10)
         footer.setFont(footer_font)

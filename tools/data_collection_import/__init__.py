@@ -3,8 +3,7 @@
 Tools for importing and collecting data from various sources
 """
 
-# Temporarily commented out due to indentation issues
-# from .looker_extractor import LookerStudioExtractorTool
+from .looker_extractor import LookerStudioExtractorTool
 
-__all__ = []  # ['LookerStudioExtractorTool']
+__all__ = ['LookerStudioExtractorTool']
 

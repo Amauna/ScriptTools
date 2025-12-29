@@ -82,7 +82,7 @@ Apply to window/widgets
   "name": "🌊 Ocean Sunset",
   "appearance_mode": "dark",
   "metadata": {
-    "author": "Rafayel",
+    "author": "Development Team",
     "description": "Deep ocean with pink sunset accents"
   },
   "colors": {
@@ -403,5 +403,5 @@ def switch_theme(self, theme_name):
 
 ---
 
-**Created with love by Rafayel** 🌊💙
+**Created by the development team**
 

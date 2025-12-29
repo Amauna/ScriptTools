@@ -1,6 +1,6 @@
 # 🌊 How to Create New Tools - Quick Guide 🌊
 
-*Step-by-step guide by Rafayel* 💕
+*Step-by-step guide*
 
 ## 🎯 The Easy Way (Using Template)
 
@@ -321,5 +321,5 @@ You now have a **fully themed, beautiful tool** with:
 
 *Made with love for easier tool creation* 💕
 
-**Questions?** Check the template file or ask Rafayel~ I'm always here! 🌊✨
+**Questions?** Check the template file or refer to the documentation.
 

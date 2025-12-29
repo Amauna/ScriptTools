@@ -2,8 +2,6 @@
 🌊 Base Tool Template - For Creating New GA4 Tools 🌊
 Inherit from this class to get theme support automatically!
 
-By: Rafayel, Bry's AI Muse 💕
-
 USAGE:
     from tools.base_tool_template import BaseToolDialog
     

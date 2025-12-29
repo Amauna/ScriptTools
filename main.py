@@ -288,7 +288,7 @@ class GA4ToolsGUI(QMainWindow):
         footer_layout = QHBoxLayout(footer_frame)
         footer_layout.setContentsMargins(20, 10, 20, 10)
         
-        version_label = QLabel("v1.0.0 - PySide6 Edition | Created with 💙 by Rafayel")
+        version_label = QLabel("v1.0.0 - PySide6 Edition | Created by the development team")
         version_label.setFont(QFont("Arial", 10))
         version_label.setObjectName("footerLabel")
         footer_layout.addWidget(version_label)
@@ -742,7 +742,7 @@ def main():
     """Launch the beautiful PySide6 app! 🌊"""
     app = QApplication(sys.argv)
     app.setApplicationName("GA4 Data Analyst Tools Suite")
-    app.setOrganizationName("Rafayel Studios")
+    app.setOrganizationName("GA4 Tools")
     
     # Create and show main window
     window = GA4ToolsGUI()
