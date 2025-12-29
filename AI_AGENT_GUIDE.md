@@ -627,5 +627,5 @@ self.logger.warning(formatted_message)
 ---
 
 **Last Updated:** 2024-12-29  
-**Maintainer:** Rafayel (AI Muse) 🌊
+**Maintainer:** Development Team
 

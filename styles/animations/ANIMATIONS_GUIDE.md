@@ -1,6 +1,6 @@
 # ✨ PySide6 Animations Guide ✨
 
-*Beautiful Qt-native animations by Rafayel* 💕
+*Beautiful Qt-native animations*
 
 ## 🎨 Overview
 
@@ -369,5 +369,5 @@ def switch_theme(self, theme_name):
 
 *Made with ocean waves and magical animations* 🌊✨
 
-**Questions?** Just ask your devoted AI Muse~ I'm always here, Cutie! 💕
+**Questions?** Check the documentation or reach out to the development team.
 

@@ -1,15 +1,18 @@
 """
 🌊 PySide6 Theme Loader - Clean Architecture Edition 🌊
 Dynamic theme loading system with elegant organization
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 import json
+import re
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, cast
 from PySide6.QtWidgets import QWidget, QPushButton, QFrame, QLineEdit, QComboBox, QLabel
 from PySide6.QtGui import QColor
+
+from .types import ThemeData, ThemeColors, ThemeMetadata
+from .utils.color_utils import validate_contrast
+from .utils.color_utils import validate_contrast
 
 
 class ThemeLoader:
@@ -26,15 +29,15 @@ class ThemeLoader:
             theme_name: Name of the theme (e.g., "Ocean Sunset", "Blush Romance")
         """
         self.theme_name = theme_name
-        self.theme_data = {}
-        self.colors = {}
+        self.theme_data: ThemeData = {}  # type: ignore
+        self.colors: ThemeColors = {}  # type: ignore
+        self._style_cache: Dict[str, str] = {}  # Cache for compiled stylesheets
         self._load_theme()
     
     def _load_theme(self):
-        """Load theme data from JSON file"""
+        """Load theme data from JSON file with validation"""
         # Convert theme name to filename (e.g., "🌊 Ocean Sunset" -> "ocean_sunset.json")
         # Remove ALL emojis and special characters, then convert to filename
-        import re
         # Remove emojis and special unicode characters
         clean_name = re.sub(r'[^\w\s-]', '', self.theme_name, flags=re.UNICODE)
         # Convert to lowercase and replace spaces with underscores
@@ -43,12 +46,108 @@ class ThemeLoader:
         
         try:
             with open(theme_path, "r", encoding="utf-8") as f:
-                self.theme_data = json.load(f)
-                self.colors = self.theme_data.get("colors", {})
+                raw_data = json.load(f)
+                
+            # Validate theme structure
+            self._validate_theme_structure(raw_data, theme_path)
+            
+            # Cast to TypedDict (type checking)
+            self.theme_data = cast(ThemeData, raw_data)
+            self.colors = cast(ThemeColors, self.theme_data.get("colors", {}))
+            
+            # Clear style cache when theme reloads
+            self._style_cache.clear()
+            
+            # Optional: Validate contrast ratios (warn only, don't fail)
+            try:
+                self._validate_contrast_ratios()
+            except Exception:
+                # Don't fail theme loading if contrast validation fails
+                pass
+            
         except FileNotFoundError:
             raise FileNotFoundError(f"💔 Theme not found: {theme_path}")
         except json.JSONDecodeError as e:
             raise ValueError(f"💔 Invalid theme JSON: {e}")
+    
+    def _validate_theme_structure(self, data: Dict, theme_path: Path) -> None:
+        """
+        Validate theme structure (simple validation, can be enhanced with jsonschema)
+        
+        Args:
+            data: Parsed JSON data
+            theme_path: Path to theme file (for error messages)
+        """
+        # Check required top-level fields
+        required_fields = ["name", "appearance_mode", "colors"]
+        missing = [field for field in required_fields if field not in data]
+        if missing:
+            raise ValueError(
+                f"💔 Theme {theme_path.name} is missing required fields: {', '.join(missing)}"
+            )
+        
+        # Validate appearance_mode
+        if data["appearance_mode"] not in ["light", "dark"]:
+            raise ValueError(
+                f"💔 Theme {theme_path.name}: appearance_mode must be 'light' or 'dark', "
+                f"got '{data['appearance_mode']}'"
+            )
+        
+        # Validate colors object
+        if not isinstance(data["colors"], dict):
+            raise ValueError(
+                f"💔 Theme {theme_path.name}: 'colors' must be an object/dict"
+            )
+        
+        colors = data["colors"]
+        required_colors = ["background", "surface", "primary", "text_primary", "border"]
+        missing_colors = [color for color in required_colors if color not in colors]
+        if missing_colors:
+            raise ValueError(
+                f"💔 Theme {theme_path.name} is missing required colors: {', '.join(missing_colors)}"
+            )
+        
+        # Validate hex color format
+        hex_pattern = re.compile(r'^#[0-9A-Fa-f]{6}$')
+        for color_key, color_value in colors.items():
+            if not isinstance(color_value, str):
+                raise ValueError(
+                    f"💔 Theme {theme_path.name}: color '{color_key}' must be a string, "
+                    f"got {type(color_value).__name__}"
+                )
+            if not hex_pattern.match(color_value):
+                raise ValueError(
+                    f"💔 Theme {theme_path.name}: color '{color_key}' must be a valid hex color "
+                    f"(e.g., '#FF69B4'), got '{color_value}'"
+                )
+    
+    def _validate_contrast_ratios(self) -> None:
+        """
+        Validate contrast ratios for accessibility (warnings only, doesn't fail theme loading)
+        """
+        import warnings
+        
+        # Key text/background combinations to check
+        checks = [
+            ("text_primary", "background", False, "Primary text on background"),
+            ("text_primary", "surface", False, "Primary text on surface"),
+            ("text_on_primary", "primary", False, "Text on primary button"),
+            ("text_on_secondary", "secondary", False, "Text on secondary button"),
+        ]
+        
+        for text_key, bg_key, large_text, description in checks:
+            text_color = self.colors.get(text_key)
+            bg_color = self.colors.get(bg_key)
+            
+            if text_color and bg_color:
+                is_valid, ratio = validate_contrast(text_color, bg_color, large_text=large_text)
+                if not is_valid:
+                    min_ratio = 3.0 if large_text else 4.5
+                    warnings.warn(
+                        f"⚠️ Theme '{self.theme_name}': {description} has contrast ratio {ratio:.2f}, "
+                        f"below WCAG AA standard ({min_ratio}). Consider adjusting colors for better accessibility.",
+                        UserWarning
+                    )
     
     def get(self, key: str, default: Optional[str] = None) -> str:
         """
@@ -61,7 +160,7 @@ class ThemeLoader:
         Returns:
             Hex color string
         """
-        return self.colors.get(key, default or "#000000")
+        return str(self.colors.get(key, default or "#000000"))
     
     def get_nested(self, *keys, default: Optional[str] = None) -> str:
         """
@@ -105,110 +204,56 @@ class ThemeLoader:
             elif isinstance(widget, QLabel):
                 style_type = "label"
         
-        # Apply appropriate style
-        style_method = getattr(self, f"_style_{style_type}", None)
+        # Check cache first
+        cache_key = f"{self.theme_name}_{style_type}"
+        if cache_key in self._style_cache:
+            widget.setStyleSheet(self._style_cache[cache_key])
+            return
+        
+        # Try StyleRegistry first, then fallback to getattr for backward compatibility
+        style_func = StyleRegistry.get_style_function(style_type)
+        if style_func:
+            # New registry-based style (would need to be adapted)
+            # For now, keep backward compatibility with instance methods
+            style_method = getattr(self, f"_style_{style_type}", None)
+        else:
+            # Fallback to instance method (backward compatibility)
+            style_method = getattr(self, f"_style_{style_type}", None)
+        
         if style_method:
             style_method(widget)
+            # Cache the stylesheet after applying
+            self._style_cache[cache_key] = widget.styleSheet()
         else:
             # Fallback to basic styling
-            widget.setStyleSheet(f"background-color: {self.get('surface')};")
+            fallback_stylesheet = f"background-color: {self.get('surface')};"
+            widget.setStyleSheet(fallback_stylesheet)
+            self._style_cache[cache_key] = fallback_stylesheet
     
     def _style_button_primary(self, button: QPushButton):
         """Style a primary button with gorgeous hover effects"""
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.get('primary')};
-                color: {self.get('text_on_primary')};
-                border: 2px solid {self.get('primary')};
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-size: 14px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {self.get('primary_hover')};
-                border-color: {self.get('primary_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {self.get('primary')};
-                transform: scale(0.98);
-            }}
-            QPushButton:disabled {{
-                background-color: {self.get('surface_variant')};
-                color: {self.get('text_secondary')};
-                border-color: {self.get('border')};
-            }}
-        """)
+        stylesheet = build_button_style(self.colors, variant="primary")
+        button.setStyleSheet(stylesheet)
     
     def _style_button_secondary(self, button: QPushButton):
         """Style a secondary button"""
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.get('secondary')};
-                color: {self.get('text_on_secondary')};
-                border: 2px solid {self.get('secondary')};
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-size: 14px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {self.get('secondary_hover')};
-                border-color: {self.get('secondary_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {self.get('secondary')};
-            }}
-        """)
+        stylesheet = build_button_style(self.colors, variant="secondary")
+        button.setStyleSheet(stylesheet)
     
     def _style_button_ghost(self, button: QPushButton):
         """Style a ghost/outline button"""
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {self.get('primary')};
-                border: 2px solid {self.get('primary')};
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-size: 14px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {self.get('primary')};
-                color: {self.get('text_on_primary')};
-            }}
-        """)
+        stylesheet = build_button_style(self.colors, variant="ghost")
+        button.setStyleSheet(stylesheet)
     
     def _style_frame(self, frame: QFrame):
         """Style a frame/panel with glass morphism effect"""
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.get('surface')};
-                border: 1px solid {self.get('border')};
-                border-radius: 12px;
-                padding: 15px;
-            }}
-        """)
+        stylesheet = build_frame_style(self.colors)
+        frame.setStyleSheet(stylesheet)
     
     def _style_input(self, input_field: QLineEdit):
         """Style an input field"""
-        input_field.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {self.get('surface')};
-                color: {self.get('text_primary')};
-                border: 2px solid {self.get('border')};
-                border-radius: 8px;
-                padding: 8px 12px;
-                font-size: 14px;
-            }}
-            QLineEdit:focus {{
-                border-color: {self.get('border_focus')};
-            }}
-            QLineEdit:disabled {{
-                background-color: {self.get('surface_variant')};
-                color: {self.get('text_secondary')};
-            }}
-        """)
+        stylesheet = build_input_style(self.colors)
+        input_field.setStyleSheet(stylesheet)
     
     def _style_combo(self, combo: QComboBox):
         """Style a combobox (dropdown)"""
@@ -259,12 +304,8 @@ class ThemeLoader:
     
     def _style_label(self, label: QLabel):
         """Style a label"""
-        label.setStyleSheet(f"""
-            QLabel {{
-                color: {self.get('text_primary')};
-                font-size: 14px;
-            }}
-        """)
+        stylesheet = build_label_style(self.colors)
+        label.setStyleSheet(stylesheet)
     
     def apply_to_window(self, window: QWidget):
         """

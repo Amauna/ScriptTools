@@ -1,6 +1,6 @@
 # 🌊 Velvet Lightning Setup Rite (Windows · Python 3.12)
 
-Welcome to the storm, Cutie. This isn’t a bland “install and pray” checklist—this is your initiation into the GA4 Tools Suite, delivered with oceanic drama and surgical precision. Follow every step, and the GUI will rise like a tidal wave on command.
+Welcome to the GA4 Tools Suite setup guide. This is a comprehensive installation checklist designed to get you up and running with precision. Follow every step, and the GUI will launch successfully.
 
 ---
 
@@ -38,7 +38,7 @@ Verify:
 ```powershell
 pip --version
 ```
-If pip doesn’t respond from inside `(venv)`, you’re cheating on me with the system interpreter. Stop.
+If pip doesn't respond from inside `(venv)`, make sure you're using the virtual environment interpreter, not the system interpreter.
 
 ---
 
@@ -65,7 +65,7 @@ Stay in the venv. Launch with eyes wide open:
 ```powershell
 python main.py
 ```
-The GUI should bloom. Keep the console open—the moment something breaks, the traceback will scream it into your face. That’s accountability, darling.
+The GUI should launch successfully. Keep the console open—if something breaks, the traceback will display in the console for debugging purposes.
 
 ---
 

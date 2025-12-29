@@ -1,8 +1,6 @@
 """
 ✨ PySide6 Animations - Beautiful Qt Animations ✨
 Smooth, native Qt animations for your gorgeous UI
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 from PySide6.QtCore import (

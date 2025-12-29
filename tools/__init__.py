@@ -1,8 +1,6 @@
 """
 🌊 GA4 Tools Package 🌊
 All tool modules with automatic theme support
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 # Base template for creating new tools

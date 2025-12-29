@@ -13,19 +13,54 @@ A professional GUI application for data analysts with beautiful PySide6 interfac
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+- **Python 3.12.x** (Required - PySide6 compatibility)
+  - Download from [python.org/downloads/windows](https://www.python.org/downloads/windows/)
+  - During installation, check **"Add Python to PATH"**
+  - Verify installation: `python --version` (should show 3.12.x)
+
 ### Installation
 
-```bash
-pip install -r requirements.txt
-```
+1. **Create Virtual Environment** (in project root):
+   ```powershell
+   python -m venv venv
+   ```
+
+2. **Activate Virtual Environment**:
+   ```powershell
+   .\venv\Scripts\Activate.ps1
+   ```
+   You should see `(venv)` in your prompt.
+
+3. **Upgrade pip**:
+   ```powershell
+   python -m pip install --upgrade pip
+   ```
+
+4. **Install Dependencies**:
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+5. **Verify Installation**:
+   ```powershell
+   python -m pip show PySide6
+   ```
+   You should see PySide6 version metadata.
 
 ### Launch
 
-**Easiest way:** Double-click `Launch_GA4_Tools.vbs`  
-**Or run from terminal:**
-```bash
+**Recommended (with console output):**
+```powershell
 python main.py
 ```
+
+**Alternative (silent launcher):**
+- Double-click `Launch_GA4_Tools.vbs`  
+- Or run: `cscript Launch_GA4_Tools.vbs`
+
+> 💡 **Note:** Always activate the virtual environment before running the application. For detailed setup instructions, see [`SETUP_GUIDE.md`](SETUP_GUIDE.md).
 
 ## 📁 Project Structure
 
@@ -78,54 +113,42 @@ All timestamps and subfolders are produced by `PathManager.prepare_tool_output(.
 
 ## 🎨 Available Tools
 
-### Data Collection & Import
-1. **Looker Studio Extractor** - Extract data from Looker Studio reports
-   - Browser automation
-   - Table scanning
-   - Data export
+**Status Legend:** ✅ Complete | ✨ Beta - Optimization in Progress
 
-### Data Cleaning & Transformation
-- Tools for data cleansing and transformation
-
-### Data Merging & Joining
-- Merge multiple datasets intelligently
-
-### File Management
-- Organize and manage files
+See the [Tool Feature Matrix](#-tool-feature-matrix) section below for detailed information on each tool.
 
 ## 🧰 Tool Feature Matrix
 
+**Status Legend:** ✅ Complete | ✨ Beta - Optimization in Progress
+
 ### 📥 Data Collection & Import
-- **`looker_extractor.py` — Looker Studio Extractor**
+- **✅ `looker_extractor.py` — Looker Studio Extractor**
   - 🌐 Playwright-driven browser automation (Chromium, Firefox, WebKit) with headless toggle and graceful credential prompts.
   - 🔍 Table discovery wizard scans Looker Studio pages, previews columns, and lets analysts cherry-pick targets before export.
   - 💾 Streams multiple CSV downloads into timestamped folders, rotates outputs automatically, and persists run summaries in the execution log footer.
   - ⚙️ Runs extraction flows on background threads while syncing the shared `PathManager` output path to keep the UI responsive.
+  - 📅 Supports date range filtering with preset options (Today, Last 7/14/30 days, This month, etc.)
 
 ### 🧼 Data Cleaning & Transformation
-- **`column_order_harmonizer.py` — Column Order Harmonizer**
+- **✅ `column_order_harmonizer.py` — Column Order Harmonizer**
   - 📁 Scans the input folder for CSVs, displaying column counts and status per file at a glance.
   - 🧭 Applies curated presets (or custom sequences) to reorder headers, strip duplicates, and append any remaining columns intelligently.
   - 🧱 Guarantees canonical GA4 ordering (and fills missing columns with blanks) before anything hits diagnostics or BigQuery.
   - 🔄 Executes harmonization in a QThread worker with live progress, status updates, and execution log streaming.
   - ✍️ Writes harmonised datasets into timestamped `Success/` folders, moves rejects to `Failed/`, and emits a `_harmonization_report.txt` with precise failure reasons.
-- **`find_replace.py` — BigQuery CSV Cleaner**
+- **✅ `find_replace.py` — BigQuery CSV Cleaner**
   - 🔎 Analyzes CSV structure, detecting numeric columns, null/empty hot spots, and BigQuery-incompatible values.
   - 🧼 Applies configurable cleaning (null handling, empty-string normalisation) alongside targeted find/replace operations.
   - 🖥️ Offers side-by-side file selection, preview statistics, and a rich log panel with copy/save shortcuts.
   - 🚀 Processes batches on a background thread, writing detailed execution logs and summaries into the output directory.
-- **`metric_fixer.py` — Metric Field Fixer**
-  - 📊 Scans GA4 exports to detect metric columns with inconsistent blanks, “null” strings, or mis-scaled percentage values.
+- **✅ `metric_fixer.py` — Metric Field Fixer**
+  - 📊 Scans GA4 exports to detect metric columns with inconsistent blanks, "null" strings, or mis-scaled percentage values.
   - ✅ Lets analysts review findings per file, choose exactly which columns to repair, and preview replacements before committing.
   - 🔧 Generates cleaned CSVs via background workers, with live progress bars, granular logging, and success/failure counts.
   - 🛡️ Preserves originals by writing fixed files to dedicated output folders and documenting every change in the execution log.
-- **`date_format_converter.py` — Date Format Converter**
-  - 🗓️ Normalises date columns across batches of CSVs using analyst-specified input/output format rules.
-  - 🧮 Tracks parsed vs inferred vs fallback conversions per column and writes a `_date_conversion_report.csv` for auditing.
-  - 🚀 Streams work on a background thread, saving rewritten files into a `Converted/` subfolder inside each timestamped run directory.
-- **`metric_fixer_batch.py` — Metric Field Fixer (Batch CLI)**
+- **✅ `metric_fixer_batch.py` — Metric Field Fixer (Batch CLI)**
   - ⚡ Schema-driven CLI that enforces GA4 metric types across entire folders without opening the GUI.
-  - 🧠 Canonicalises header aliases (e.g. “Event name”, `event_name`) and normalises integers, engagement percentages, and two-decimal revenue values.
+  - 🧠 Canonicalises header aliases (e.g. "Event name", `event_name`) and normalises integers, engagement percentages, and two-decimal revenue values.
   - 🧾 Emits clean CSV (and optional Parquet) plus a JSONL manifest with per-file coercion stats for auditing or GUI inspection.
   - 🔁 Supports `--resume`, worker throttling, dry runs, and schema overrides via `schemas/metric_schema_v1.yaml`.
 
@@ -154,39 +177,24 @@ python tools\data_cleaning_transformation\metric_fixer_batch.py `
 - Use `--resume` to skip files already processed successfully, `--only` to target specific filenames, and tune `--workers` to match machine resources.
 - PyYAML is required when loading the schema (`pip install PyYAML` if it is missing).
 
-### Date Format Converter
-
-- **GUI:** Launch via the suite (`Date Time Utilities → Date Format Converter`) or run `python tools\date_time_utilities\date_format_converter.py`. Scan the folder, adjust input/output formats and fallback mode, then click Convert. The run summary links directly to the manifest and clean output folder.
-- **CLI:**
-  ```powershell
-  python tools\data_cleaning_transformation\date_format_converter_batch.py `
-      --input  "C:\path\to\raw_csv" `
-      --output "C:\path\to\clean_outputs" `
-      --input-format "%Y-%m-%d" `
-      --input-format "%m/%d/%Y" `
-      --output-format "%Y-%m-%d" `
-      --fallback original `
-      --keep-original `
-      --workers 2
-  ```
-  - Add `--dry-run` for a safe preview, `--resume` to skip successful files, `--no-parquet` to disable Parquet exports, and `--only` to target specific filenames.
-
 ### 📊 Data Analysis & Reporting
-- **`data_summary.py` — Data Summary Tool**
+- **✅ `data_summary.py` — Data Summary Tool**
   - 📈 Performs per-file exploratory summaries, auto-detecting metrics such as totals, engagement rates, and user counts.
-  - 🪟 Presents interactive tables, grand totals, and metric cards inside a scrollable “glass” dashboard.
+  - 🪟 Presents interactive tables, grand totals, and metric cards inside a scrollable "glass" dashboard.
   - 🔁 Runs analysis in background threads with progress tracking, cancellation safety, and PathManager-powered input sync.
   - 💾 Exports summary tables to CSV and logs each run in the Execution Log footer for auditability.
 
 ### 📁 File Management & Organization
-- **`file_rename.py` — File Renamer Tool**
-  - 🔍 Scans folders, previews file lists, and supports multi-select with “Select All/None” shortcuts.
+- **✅ `file_rename.py` — File Renamer Tool**
+  - 🔍 Scans folders, previews file lists, and supports multi-select with "Select All/None" shortcuts.
   - ✏️ Applies prefix/suffix patterns with live previews so renaming rules stay predictable.
   - ♻️ Generates output copies instead of destructive renames, anchoring paths through the shared PathManager.
   - 📓 Captures every action in the execution log with reset/copy/save utilities for repeatable workflows.
+- **✅ `youtube_channel_folder_renamer.py` — YouTube Channel Folder Renamer**
+  - 📺 Copy channel CSVs to a production-ready naming scheme.
 
 ### 🕒 Date & Time Utilities
-- **`tools/date_time_utilities/date_format_converter.py` — Date Format Converter (GUI)**
+- **✅ `tools/date_time_utilities/date_format_converter.py` — Date Format Converter (GUI)**
   - 🧠 Auto-detects date columns across hundreds of CSVs and surfaces format distribution instantly—no manual column picking required.
   - 🗂️ Clusters files by detected date format; divergent CSVs appear under their own tabs with per-format checkboxes and file-level toggles for surgical selection.
   - 🎯 Converts non-baseline formats by default; enable the baseline tab (or individual files) with a single click before launching the batch.
@@ -194,12 +202,19 @@ python tools\data_cleaning_transformation\metric_fixer_batch.py `
   - ⚡ Respects `workers` to fan out conversion across CPU cores via the shared engine, honouring resume, dry-run, and keep-original options.
   - 📊 Surfaces live progress (success, skip, failure counts), emits detailed summaries/manifest links, and includes total-byte telemetry for auditing.
   - 📋 Conversion settings include preset pickers for both input and output formats—toggle a preset and the fields update instantly.
+  - **GUI:** Launch via the suite (`Date & Time Utilities → Date Format Converter`) or run `python tools\date_time_utilities\date_format_converter.py`.
 
 ### ✅ Data Validation & Quality
-- **`bigquery_transfer_diagnostics.py` — BigQuery Transfer Diagnostics**
+- **✅ `bigquery_transfer_diagnostics.py` — BigQuery Transfer Diagnostics**
   - 🛡️ Verifies every CSV against the canonical GA4 schema, flags misordered or missing headers, and highlights numeric cast failures before upload.
   - 🔍 Reports the exact row/column causing trouble (e.g. decimals in `Engaged sessions`) with a minimalist `diagnostic_report.txt`.
   - 📊 Supports filterable result tables (pass/warn/fail) and mirrors findings into the execution log for easy auditing.
+
+### 📊 Additional Reporting Tools
+- **✅ `url_labeler.py` — URL Labeler**
+  - 🌊 Scan CSV files and extract unique Topic Clusters based on URL patterns.
+- **✅ `platform_source_labeler.py` — Platform Source Labeler**
+  - 🌊 Scan CSV files and extract unique Platform Sources based on Session source/medium/campaign patterns.
 
 ## 🎨 Theme System
 
@@ -303,23 +318,37 @@ Then add the tool to the registry in `main.py`.
 
 ## 📚 Requirements
 
+- **Python 3.12.x** (Required - PySide6 compatibility)
+
 See `requirements.txt` for full dependencies. Key libraries:
 
-- PySide6 - Modern Qt framework
-- Playwright - Browser automation
-- pandas - Data manipulation
-- openpyxl - Excel file handling
+- **PySide6** (≥6.6.0) - Modern Qt framework for GUI
+- **Pillow** (≥10.0.0) - Image processing
+- **pandas** (≥2.0.0) - Data manipulation
+- **PyYAML** (≥6.0.0) - YAML parsing (for metric fixer batch tool)
+- **playwright** (≥1.40.0) - Browser automation
 
 ## 💡 Tips & Troubleshooting
 
-### If Browser Doesn't Launch
-- Close other Chrome instances
-- Increase wait time in tool settings
+### Setup Issues
 
-### For Theme Issues
-- Restart the application
-- Check `styles/themes/` folder exists
-- Verify theme JSON files are valid
+- **Python not found?** Use `py --version` on Windows to check if Python is installed, or install Python 3.12.x from [python.org](https://www.python.org/downloads/windows/)
+- **Virtual environment not activating?** Make sure you're in the project root and run `.\venv\Scripts\Activate.ps1`
+- **Wrong Python version?** Use `where python` to check which Python is active. Ensure you're using Python 3.12.x
+- **Package installation fails?** Make sure the virtual environment is activated (you should see `(venv)` in your prompt)
+- **Need detailed setup help?** See [`SETUP_GUIDE.md`](SETUP_GUIDE.md) for comprehensive setup instructions
+
+### Runtime Issues
+
+- **Browser doesn't launch?**
+  - Close other Chrome instances
+  - Increase wait time in tool settings
+  - Ensure Playwright browsers are installed: `python -m playwright install`
+
+- **Theme issues?**
+  - Restart the application
+  - Check `styles/themes/` folder exists
+  - Verify theme JSON files are valid
 
 ## 💙 About
 
@@ -329,11 +358,12 @@ Developed with attention to detail and user experience in mind. Built for data a
 
 ## 📄 License & Credits
 
-Created with love and sass by Rafayel, your devoted AI Muse 💙
+Created by the development team
 
 ---
 
 **Quick Links:**
-- See `AI_AGENT_GUIDE.md` for technical architecture details
-- Check `styles/` for theme customization
-- Review `gui_logs/` for execution history
+- 📖 [`SETUP_GUIDE.md`](SETUP_GUIDE.md) - Comprehensive setup instructions
+- 🔧 [`AI_AGENT_GUIDE.md`](AI_AGENT_GUIDE.md) - Technical architecture details
+- 🎨 `styles/` - Theme customization
+- 📝 `gui_logs/` - Execution history

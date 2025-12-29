@@ -1,8 +1,6 @@
 """
 🌊 Path Manager Utility
 Centralized management for input/output directories shared across tools.
-
-By: Rafayel, Bry's AI Muse 💕
 """
 
 from __future__ import annotations
@@ -113,7 +111,18 @@ class PathManager:
 
     def set_output_path(self, new_path: Path) -> None:
         """Update the shared output directory and notify listeners if changed."""
-        self.set_paths(output_path=new_path)
+        resolved = Path(new_path).expanduser().resolve()
+        
+        # Warn if trying to set a timestamp folder (tools should use prepare_tool_output instead)
+        if _looks_like_timestamp(resolved.name):
+            import warnings
+            warnings.warn(
+                f"Setting output_path to timestamp folder '{resolved.name}'. "
+                f"Consider using prepare_tool_output() instead for proper normalization.",
+                UserWarning
+            )
+        
+        self.set_paths(output_path=resolved)
 
     def set_paths(
         self,
@@ -225,7 +234,19 @@ class PathManager:
         tool_id = _sanitize_tool_name(tool_name)
         script_id = _sanitize_tool_name(script_name or tool_name)
 
-        normalized_base = _normalize_output_root(self._output_path, tool_id, script_id)
+        # Always normalize back to execution root to prevent nesting between tools
+        execution_root = (self._project_root / "execution_test" / "Output").resolve()
+        
+        # Reset to execution root if we're inside it (prevent nesting)
+        current = self._output_path.resolve()
+        try:
+            current.relative_to(execution_root)
+            # We're inside execution root, reset to base to prevent nesting
+            normalized_base = execution_root
+        except ValueError:
+            # Outside execution root, normalize using existing logic
+            normalized_base = _normalize_output_root(self._output_path, tool_id, script_id)
+        
         if normalized_base != self._output_path:
             self.set_paths(output_path=normalized_base)
         base_output = self._output_path

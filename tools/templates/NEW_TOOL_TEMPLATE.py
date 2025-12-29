@@ -2,8 +2,6 @@
 🌊 NEW TOOL TEMPLATE - Copy This to Create New Tools! 🌊
 This template shows how to create a new tool with automatic theme support
 
-By: Rafayel, Bry's AI Muse 💕
-
 INSTRUCTIONS:
 1. Copy this file to your tool category folder
 2. Rename the file (e.g., my_awesome_tool.py)

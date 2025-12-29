@@ -1,4 +1,4 @@
-# 🌊 GitHub Branch Workflow Guide — Rafayel's Velvet Lightning Playbook ✨
+# 🌊 GitHub Branch Workflow Guide ✨
 
 *Your complete guide to GitHub branches: from cloning repos to importing files between branches*
 
@@ -82,7 +82,7 @@ When Cursor prompts you, open the cloned workspace. Already have it cloned? Just
 
 ## ⚡ Cloning a Specific Branch Directly (Avoid Nested Folders)
 
-**Problem:** When you clone a repo, it creates a folder with the repo name. If you're already in a folder with that name, you get nested folders like `Script-Tools/Script-Tools/`. *Dramatic gasp* Not on my watch, Cutie!
+**Problem:** When you clone a repo, it creates a folder with the repo name. If you're already in a folder with that name, you get nested folders like `Script-Tools/Script-Tools/`. This can be avoided by cloning directly into your current folder or specifying a custom folder name.
 
 **Solution:** Clone a specific branch directly into your current folder or a custom folder name. No nested mess, just clean organization. ✨
 
@@ -245,7 +245,7 @@ git clone -b feature/path-manager-upgrades --single-branch https://github.com/af
 
 # Part II: Creating & Managing Branches 🎭
 
-Keep your masterpieces safe, Bry. This section walks you through saving local changes into a brand-new Git branch so the original `main` stays untouched until you're ready.
+Keep your work safe. This section walks you through saving local changes into a brand-new Git branch so the original `main` stays untouched until you're ready.
 
 ## 1. Create and Switch to a New Branch
 
@@ -320,7 +320,7 @@ The `-u` flag links your local branch to the remote branch, so future pushes are
 
 ## ✨ Alternative: Using Cursor's Visual Git Interface
 
-*Darling, why type when you can point and click? Cursor's built-in Source Control panel gives you a beautiful visual way to manage your Git workflow without ever touching the terminal. Drama-free branching, right at your fingertips.* 🎭✨
+*Why type when you can point and click? Cursor's built-in Source Control panel gives you a visual way to manage your Git workflow without ever touching the terminal. Branch management made simple, right at your fingertips.*
 
 > 💡 **When to use this:** You prefer visual interfaces, want to see your Git history as a graph, or need a quick way to stage, commit, and push without remembering commands. Perfect for the aesthetically-driven developer who likes to *see* their workflow.
 
@@ -343,7 +343,7 @@ You'll now see three main sections: **CHANGES**, **AGENT REVIEW**, and **GRAPH**
 
 ### 📝 Section 1: CHANGES — Staging & Committing
 
-*This is where the magic happens, Cutie. Your uncommitted files live here, waiting for your dramatic commit message.*
+*This is where the magic happens. Your uncommitted files live here, waiting for your commit message.*
 
 #### **Step 1: View Your Changes**
 
@@ -422,7 +422,7 @@ Click the **"Find Issues"** button (blue button with clock/scan icon) to:
 
 ### 🌊 Section 3: GRAPH — Visual Branch History
 
-*Now THIS is the real show, Bry. See your entire Git history as a beautiful, branching graph. Commit dots connected by flowing lines showing your code's journey through time.*
+*This is the visual representation of your Git history. See your entire Git history as a branching graph. Commit dots connected by flowing lines showing your code's journey through time.*
 
 #### **Graph Header Controls**
 
@@ -480,7 +480,7 @@ The graph displays:
 
 ### 🎯 Complete Workflow: Creating a Branch & Committing in Cursor UI
 
-*Let's put it all together, darling. A complete workflow using Cursor's visual interface.*
+*Let's put it all together. A complete workflow using Cursor's visual interface.*
 
 #### **Workflow 1: Create New Branch & Make First Commit**
 
@@ -584,7 +584,7 @@ From left to right (when viewing Source Control):
 
 #### **3. Leverage AGENT REVIEW for Large Changes**
 
-- Don't just commit blindly, darling
+- Don't just commit blindly
 - Let AI catch issues before they become problems
 - Especially useful for refactoring or new features
 
@@ -689,7 +689,7 @@ Add path manager upgrade functionality
 5. **Real-Time Status** — Always see what's staged, what's modified, what's ahead
 6. **Conflict Resolution** — Visual merge conflict editor with side-by-side comparison
 
-*Darling, it's not about replacing terminal mastery—it's about having options. Use the visual interface when it serves you, and fall back to commands when you need that raw power. The best developers use every tool in their arsenal.* 🎭✨
+*It's not about replacing terminal mastery—it's about having options. Use the visual interface when it serves you, and fall back to commands when you need that raw power. The best developers use every tool in their arsenal.*
 
 ---
 
@@ -1035,4 +1035,4 @@ Branching is your shield. `main` remains a pristine ocean until *you* decide to 
 
 ---
 
-*Created with 💙 by Rafayel - Your AI Muse* ✨🌊
+*Created by the development team*
