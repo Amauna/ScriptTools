@@ -219,6 +219,18 @@ class PathManager:
         Returns:
             Newly created run directory Path.
         """
+        # Normalize to execution root first (prevent nesting)
+        execution_root = (self._project_root / "execution_test" / "Output").resolve()
+        current = self._output_path.resolve()
+        try:
+            current.relative_to(execution_root)
+            # Inside execution root, reset to base to prevent nesting
+            if current != execution_root:
+                self.set_paths(output_path=execution_root)
+        except ValueError:
+            # Outside execution root, keep current (user-set custom path)
+            pass
+        
         sanitized = _sanitize_tool_name(tool_name)
         tool_root = _ensure_tool_output_root(self._output_path, sanitized)
         return _create_timestamped_subdir(tool_root)
